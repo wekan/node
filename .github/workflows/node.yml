@@ -12,6 +12,8 @@ name: Node.js i386 armhf armv7
 #                                assuming NEON
 #   node-armv7   32-bit ARM      hard-float, NEON — ARMv7-A tuned, for boards
 #                                that have it
+#   node-loong64 LoongArch64     (--dest-cpu=loong64) — V8 has the port, nobody
+#                                publishes the binary
 #
 # armhf and armv7 are both 32-bit hard-float ARM: the difference is the FPU
 # baseline, which is the difference that matters on the older boards this exists
@@ -26,6 +28,15 @@ name: Node.js i386 armhf armv7
 #     not released", not "gone". The only commit that ever removed a 32-bit
 #     target was 7ad0cc3e571, and that is 32-bit WINDOWS.
 # So what was missing was the BUILD, not the code, and that is what this adds.
+#
+# What is deliberately NOT here, of the platforms wekan/FerretDB builds for:
+#   armel (ARMv5, soft-float) - V8 has not supported ARMv5 for many years. There
+#     is no Node.js for it anywhere and this fork cannot make one either; a build
+#     target that can only ever fail is worse than an honest gap.
+#   win32 / win-arm64 / win64 - Windows needs a Windows runner and MSVC, not a
+#     cross compiler on Linux. A separate workflow, if they are ever wanted.
+#   mac-* and freebsd-* - likewise their own hosts. macOS x64 and arm64 are on
+#     nodejs.org already; FreeBSD builds Node from ports.
 #
 # Run it from the Actions page (Run workflow) or:
 #   gh workflow run node.yml -f version=v24.18.1
@@ -103,6 +114,17 @@ jobs:
             configure_flags: >-
               --dest-cpu=arm --dest-os=linux --cross-compiling
               --with-arm-float-abi=hard --with-arm-fpu=neon
+          # LoongArch64. Node has supported it since configure.py learned
+          # `loong64` and V8 carries a full port (deps/v8/src/codegen/loong64),
+          # but neither nodejs.org nor unofficial-builds publishes a binary - so
+          # a LoongArch machine has no runtime to run anything Node with, which
+          # is exactly the gap this fork exists to fill. wekan/FerretDB builds
+          # for loong64, so WeKan can now ship a bundle for it.
+          - platform: loong64
+            mode: cross
+            triple: loongarch64-linux-gnu
+            apt_packages: gcc-loongarch64-linux-gnu g++-loongarch64-linux-gnu
+            configure_flags: --dest-cpu=loong64 --dest-os=linux --cross-compiling
     steps:
       - uses: actions/checkout@v4
 
@@ -219,11 +241,11 @@ jobs:
           #    rather than promised and missing.
           present="$(ls dist 2>/dev/null | sed -n 's#^node-\(.*\)#\1#p' | sort -u)"
           plats=""
-          for a in i386 armhf armv7; do
+          for a in i386 armhf armv7 loong64; do
             printf '%s\n' "$present" | grep -qx "$a" && plats="${plats:+$plats }$a"
           done
           for a in $present; do
-            printf ' %s ' "i386 armhf armv7" | grep -q " $a " || plats="${plats:+$plats }$a"
+            printf ' %s ' "i386 armhf armv7 loong64" | grep -q " $a " || plats="${plats:+$plats }$a"
           done
           [ -n "$plats" ] || plats="(none built)"
           # Comma-separated for the `Platforms:` line, which is the form the
