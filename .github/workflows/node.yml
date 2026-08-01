@@ -75,11 +75,15 @@ jobs:
   # then a single red job with its own log, not "the build failed".
   build:
     name: build ${{ matrix.platform }}
+    # 350, not the 300 this started with: the ARM containers run under QEMU and
+    # a full Node build there is hours. 360 is the ceiling GitHub allows, and a
+    # job that is killed at 300 having done five hours of work tells nobody
+    # anything. ../log/node/TODO.txt says what to do if even this is not enough.
     # Linux platforms cross compile (or build in a container) on the Linux
     # runner; win32 needs a Windows one with MSVC, so the runner comes from the
     # matrix rather than being fixed.
     runs-on: ${{ matrix.runs_on || 'ubuntu-latest' }}
-    timeout-minutes: 300
+    timeout-minutes: 350
     strategy:
       fail-fast: false
       matrix:
@@ -98,26 +102,44 @@ jobs:
             mode: container
             image: i386/debian:bookworm
             docker_platform: linux/386
-            configure_flags: --dest-cpu=x86 --dest-os=linux
-          # 32-bit ARM cross compiles on the amd64 runner. `--cross-compiling`
-          # makes configure set want_separate_host_toolset, so V8 builds
-          # mksnapshot with the HOST compiler and the target objects with the
-          # cross one; without it the build produces ARM tools it cannot run.
-          # configure reads __ARM_ARCH out of $CC, so arm_version is picked up
-          # from the cross compiler itself rather than from the runner.
+            # --openssl-no-asm: deps/openssl's pregenerated x86 assembly is
+            # written for NASM - `%ifdef __CET__` and friends - and the build
+            # feeds those .S files to GNU as, which answers "junk at end of
+            # line, first unrecognized character is `%'" for every one of them.
+            # Nobody has assembled these since nodejs.org stopped building
+            # linux-x86, so they rotted. The C implementations are slower at
+            # crypto and they compile.
+            configure_flags: --dest-cpu=x86 --dest-os=linux --openssl-no-asm
+          # 32-bit ARM builds AS the target, in an armhf container, and NOT by
+          # cross compiling - which was tried and cannot work with this build
+          # system. V8 says so itself, in deps/v8/include/v8config.h:
+          #
+          #     #if (V8_TARGET_ARCH_ARM && !(V8_HOST_ARCH_IA32 || V8_HOST_ARCH_ARM))
+          #     #error Target architecture arm is only supported on arm and ia32 host
+          #
+          # An ARM32 target therefore needs an ARM or 32-bit x86 HOST. V8's own
+          # GN build gets around that with a simulator build; node's GYP files
+          # have no USE_SIMULATOR anywhere, so that door is shut here. The cross
+          # attempt failed exactly there, compiling out/Release/obj.host.
+          #
+          # So the container is the answer, as it is for i386 - except that an
+          # x86_64 runner has no ARM CPU, so this one runs under QEMU and is
+          # SLOW. See ../log/node/TODO.txt: if it does not fit in the job limit,
+          # the fix is a builder that is actually 32-bit-ARM-capable, which is
+          # how nodejs.org's own armv7 builds are made.
           - platform: armhf
-            mode: cross
-            triple: arm-linux-gnueabihf
-            apt_packages: crossbuild-essential-armhf
+            mode: container
+            image: arm32v7/debian:bookworm
+            docker_platform: linux/arm/v7
             configure_flags: >-
-              --dest-cpu=arm --dest-os=linux --cross-compiling
+              --dest-cpu=arm --dest-os=linux
               --with-arm-float-abi=hard --with-arm-fpu=vfpv3-d16
           - platform: armv7
-            mode: cross
-            triple: arm-linux-gnueabihf
-            apt_packages: crossbuild-essential-armhf
+            mode: container
+            image: arm32v7/debian:bookworm
+            docker_platform: linux/arm/v7
             configure_flags: >-
-              --dest-cpu=arm --dest-os=linux --cross-compiling
+              --dest-cpu=arm --dest-os=linux
               --with-arm-float-abi=hard --with-arm-fpu=neon
           # LoongArch64. Node has supported it since configure.py learned
           # `loong64` and V8 carries a full port (deps/v8/src/codegen/loong64),
@@ -125,8 +147,16 @@ jobs:
           # a LoongArch machine has no runtime to run anything Node with, which
           # is exactly the gap this fork exists to fill. wekan/FerretDB builds
           # for loong64, so WeKan can now ship a bundle for it.
+          # LoongArch64 DOES cross compile - v8config.h allows a loong64 target
+          # on an x64 host, unlike ARM32 above - but Ubuntu has no
+          # gcc-loongarch64-linux-gnu to cross compile WITH: the first run
+          # answered "E: Unable to locate package". Debian trixie has it, so the
+          # cross build happens inside a Debian container on the x64 runner.
+          # The container is the toolchain, not the target: this is still a
+          # cross compile and still runs at native speed.
           - platform: loong64
-            mode: cross
+            mode: cross-container
+            image: debian:trixie
             triple: loongarch64-linux-gnu
             apt_packages: gcc-loongarch64-linux-gnu g++-loongarch64-linux-gnu
             configure_flags: --dest-cpu=loong64 --dest-os=linux --cross-compiling
@@ -146,21 +176,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install the cross toolchain
-        if: matrix.mode == 'cross'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ${{ matrix.apt_packages }} python3 ninja-build
+      # Only the ARM containers need it: an x86_64 runner runs i386 natively,
+      # and the loong64 build is a CROSS compile in a Debian container, so it
+      # runs at native speed too. Registering binfmt for a CPU that is not
+      # emulated costs a step and buys nothing.
+      - name: Set up QEMU
+        if: matrix.docker_platform == 'linux/arm/v7'
+        uses: docker/setup-qemu-action@v3
 
-      - name: Build (native i386, in a container)
+      - name: Build (in a container of the target architecture)
         if: matrix.mode == 'container'
         run: |
           set -euo pipefail
-          # The build tools INSIDE the i386 image, so every compiler, linker and
-          # library the build picks up is 32-bit. `--platform` is honoured on an
-          # amd64 host without any emulation layer.
+          # The build tools INSIDE the target's own image, so the compiler, the
+          # linker and every library are the target's - and, which is the point,
+          # so is the HOST as far as V8 is concerned. V8 refuses an ia32 or ARM32
+          # target on any other host (deps/v8/include/v8config.h), so this is not
+          # a convenience: it is the only arrangement that builds.
+          #
+          # i386 needs no emulation - an x86_64 CPU runs it natively. The ARM
+          # containers do, through the QEMU registered above, and are slow for
+          # it.
           docker run --rm --platform ${{ matrix.docker_platform }} \
             -v "$PWD":/src -w /src \
             -e MAKEFLAGS="-j$(nproc)" \
@@ -175,24 +211,34 @@ jobs:
               strip out/Release/node
             '
 
-      - name: Build (cross compile)
-        if: matrix.mode == 'cross'
-        env:
-          CC: ${{ matrix.triple }}-gcc
-          CXX: ${{ matrix.triple }}-g++
-          AR: ${{ matrix.triple }}-ar
-          RANLIB: ${{ matrix.triple }}-ranlib
-          LINK: ${{ matrix.triple }}-g++
-          # The HOST half of the split toolset: mksnapshot and the other build
-          # tools run on the runner, so they are built with the runner's own
-          # compiler while everything shipped is built with the cross one.
-          CC_host: gcc
-          CXX_host: g++
+      - name: Build (cross compile, in a container that has the toolchain)
+        if: matrix.mode == 'cross-container'
         run: |
           set -euo pipefail
-          ./configure ${{ matrix.configure_flags }}
-          make -j"$(nproc)"
-          ${{ matrix.triple }}-strip out/Release/node
+          # The container supplies the CROSS COMPILER, not the CPU: this runs on
+          # the runner's own x86_64 and produces loong64 objects, so it is as
+          # fast as any other cross build. CC_host/CXX_host are the host half of
+          # the split toolset - mksnapshot and the other build tools have to run
+          # here, so they are built with the container's native compiler while
+          # everything shipped is built with the cross one.
+          docker run --rm -v "$PWD":/src -w /src \
+            -e CC="${{ matrix.triple }}-gcc" \
+            -e CXX="${{ matrix.triple }}-g++" \
+            -e AR="${{ matrix.triple }}-ar" \
+            -e RANLIB="${{ matrix.triple }}-ranlib" \
+            -e LINK="${{ matrix.triple }}-g++" \
+            -e CC_host=gcc -e CXX_host=g++ \
+            ${{ matrix.image }} \
+            sh -c '
+              set -eu
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                build-essential python3 ninja-build ca-certificates \
+                ${{ matrix.apt_packages }}
+              ./configure ${{ matrix.configure_flags }}
+              make -j"$(nproc)"
+              ${{ matrix.triple }}-strip out/Release/node
+            '
 
       - name: Build (32-bit Windows)
         if: matrix.mode == 'windows'
@@ -277,7 +323,12 @@ jobs:
           # 1. Which platforms actually built. Listed from what is in dist/, in
           #    a fixed order, so a failed platform is absent from the notes
           #    rather than promised and missing.
-          present="$(ls dist 2>/dev/null | sed -n 's#^node-\(.*\)#\1#p' | sed 's#\.exe$##' | sort -u)"
+          # `|| true`: when EVERY build fails there are no artifacts, dist/ does
+          # not exist, and `ls` exits 2 - which under `set -e` killed this step
+          # with a bare "Process completed with exit code 2" and no word about
+          # what was actually wrong. The empty case is handled below, where it
+          # can say so.
+          present="$( (ls dist 2>/dev/null || true) | sed -n 's#^node-\(.*\)#\1#p' | sed 's#\.exe$##' | sort -u)"
           plats=""
           for a in i386 armhf armv7 loong64 win32; do
             printf '%s\n' "$present" | grep -qx "$a" && plats="${plats:+$plats }$a"
@@ -285,7 +336,10 @@ jobs:
           for a in $present; do
             printf ' %s ' "i386 armhf armv7 loong64 win32" | grep -q " $a " || plats="${plats:+$plats }$a"
           done
-          [ -n "$plats" ] || plats="(none built)"
+          if [ -z "$plats" ]; then
+            echo "::error::No platform produced a binary - every build job failed. Their logs say why; nothing is published."
+            exit 1
+          fi
           # Comma-separated for the `Platforms:` line, which is the form the
           # FerretDB releases use; the sentence above it keeps the plain spaces
           # it is read as.
