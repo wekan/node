@@ -14,6 +14,9 @@ name: Node.js
 #                                that have it
 #   node-loong64 LoongArch64     (--dest-cpu=loong64) — V8 has the port, nobody
 #                                publishes the binary
+#   node-win32.exe 32-bit Windows — upstream REMOVED the build in 7ad0cc3e571;
+#                                this fork puts the removed pieces back and
+#                                builds it with ClangCL
 #
 # armhf and armv7 are both 32-bit hard-float ARM: the difference is the FPU
 # baseline, which is the difference that matters on the older boards this exists
@@ -33,8 +36,7 @@ name: Node.js
 #   armel (ARMv5, soft-float) - V8 has not supported ARMv5 for many years. There
 #     is no Node.js for it anywhere and this fork cannot make one either; a build
 #     target that can only ever fail is worse than an honest gap.
-#   win32 / win-arm64 / win64 - Windows needs a Windows runner and MSVC, not a
-#     cross compiler on Linux. A separate workflow, if they are ever wanted.
+#   win-arm64 / win64 - nodejs.org publishes both, so there is nothing to add.
 #   mac-* and freebsd-* - likewise their own hosts. macOS x64 and arm64 are on
 #     nodejs.org already; FreeBSD builds Node from ports.
 #
@@ -73,7 +75,10 @@ jobs:
   # then a single red job with its own log, not "the build failed".
   build:
     name: build ${{ matrix.platform }}
-    runs-on: ubuntu-latest
+    # Linux platforms cross compile (or build in a container) on the Linux
+    # runner; win32 needs a Windows one with MSVC, so the runner comes from the
+    # matrix rather than being fixed.
+    runs-on: ${{ matrix.runs_on || 'ubuntu-latest' }}
     timeout-minutes: 300
     strategy:
       fail-fast: false
@@ -125,6 +130,19 @@ jobs:
             triple: loongarch64-linux-gnu
             apt_packages: gcc-loongarch64-linux-gnu g++-loongarch64-linux-gnu
             configure_flags: --dest-cpu=loong64 --dest-os=linux --cross-compiling
+          # 32-bit Windows. nodejs.org stopped publishing it and upstream removed
+          # the build itself in 7ad0cc3e571 ("build: remove support for 32-bit
+          # Windows"); this fork puts the removed pieces back - see the commit
+          # that adds this job for what and why. wekan/FerretDB builds win32, so
+          # a 32-bit Windows machine has a database and, with this, a runtime.
+          #
+          # Built with ClangCL, not cl.exe: V8's ia32 stack-scanning routine is
+          # `push_registers_asm.cc`, whose Windows branch is written in Clang's
+          # inline-asm syntax. The masm file the upstream removal referenced no
+          # longer exists in this V8, so Clang is not a preference here.
+          - platform: win32
+            mode: windows
+            runs_on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
@@ -176,7 +194,15 @@ jobs:
           make -j"$(nproc)"
           ${{ matrix.triple }}-strip out/Release/node
 
+      - name: Build (32-bit Windows)
+        if: matrix.mode == 'windows'
+        shell: cmd
+        run: |
+          call vcbuild.bat x86 clang-cl release
+          if errorlevel 1 exit /b 1
+
       - name: Name it for the release, and say what it is
+        if: matrix.mode != 'windows'
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -189,10 +215,22 @@ jobs:
           file "dist/node-${{ matrix.platform }}"
           ls -l "dist/node-${{ matrix.platform }}"
 
+      - name: Name it for the release (Windows)
+        if: matrix.mode == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # `.exe`, like wekan/FerretDB's win32 asset: a Windows binary without
+          # it is not executable by double-click and confuses every tool that
+          # goes by extension.
+          cp Release/node.exe "dist/node-${{ matrix.platform }}.exe"
+          ls -l "dist/node-${{ matrix.platform }}.exe"
+
       - uses: actions/upload-artifact@v4
         with:
           name: node-${{ matrix.platform }}
-          path: dist/node-${{ matrix.platform }}
+          path: dist/node-${{ matrix.platform }}*
           if-no-files-found: error
           retention-days: 7
 
@@ -239,13 +277,13 @@ jobs:
           # 1. Which platforms actually built. Listed from what is in dist/, in
           #    a fixed order, so a failed platform is absent from the notes
           #    rather than promised and missing.
-          present="$(ls dist 2>/dev/null | sed -n 's#^node-\(.*\)#\1#p' | sort -u)"
+          present="$(ls dist 2>/dev/null | sed -n 's#^node-\(.*\)#\1#p' | sed 's#\.exe$##' | sort -u)"
           plats=""
-          for a in i386 armhf armv7 loong64; do
+          for a in i386 armhf armv7 loong64 win32; do
             printf '%s\n' "$present" | grep -qx "$a" && plats="${plats:+$plats }$a"
           done
           for a in $present; do
-            printf ' %s ' "i386 armhf armv7 loong64" | grep -q " $a " || plats="${plats:+$plats }$a"
+            printf ' %s ' "i386 armhf armv7 loong64 win32" | grep -q " $a " || plats="${plats:+$plats }$a"
           done
           [ -n "$plats" ] || plats="(none built)"
           # Comma-separated for the `Platforms:` line, which is the form the

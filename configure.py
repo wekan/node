@@ -1540,7 +1540,11 @@ def host_arch_win():
     'AMD64'  : 'x64',
     'arm'    : 'arm',
     'mips'   : 'mips',
-    'ARM64'  : 'arm64'
+    'ARM64'  : 'arm64',
+    # Restored with 32-bit Windows (removed upstream in 7ad0cc3e571). The
+    # DEFAULT below stays x64 on purpose - what was wrong before that commit was
+    # defaulting to a 32-bit HOST, not knowing what x86 means.
+    'x86'    : 'ia32'
   }
 
   return matchup.get(arch, 'x64')

@@ -548,6 +548,14 @@
         'libraries': ['-latomic'],
       }],
     ],
+    # Relevant only for x86, restored with 32-bit Windows (removed upstream in
+    # 7ad0cc3e571). Refs: https://github.com/nodejs/node/pull/25852 and
+    # https://docs.microsoft.com/en-us/cpp/build/reference/safeseh-image-has-safe-exception-handlers
+    'msvs_settings': {
+      'VCLinkerTool': {
+        'ImageHasSafeExceptionHandlers': 'false',
+      },
+    },
   },
 
   'targets': [

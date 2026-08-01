@@ -527,6 +527,17 @@
           },
         },
       }],
+      # Restored with 32-bit Windows (removed upstream in 7ad0cc3e571): x87 math
+      # on x86 computes doubles at 80 bits and rounds on store, so the same
+      # expression can answer differently than on every other platform. SSE2
+      # makes them plain 64-bit doubles.
+      ['OS=="win" and v8_target_arch=="ia32"', {
+        'msvs_settings': {
+          'VCCLCompilerTool': {
+            'AdditionalOptions': ['/arch:SSE2'],
+          },
+        },
+      }],
       ['OS=="win" and v8_enable_prof==1', {
         'msvs_settings': {
           'VCLinkerTool': {

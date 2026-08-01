@@ -252,10 +252,11 @@ if defined compile_commands set configure_flags=%configure_flags% -C
 if defined cfg              set configure_flags=%configure_flags% --control-flow-guard
 if defined v8windbg         set configure_flags=%configure_flags% --enable-v8windbg
 
-if "%target_arch%"=="x86" (
-  echo "32-bit Windows builds are not supported anymore."
-  exit /b 1
-)
+@rem 32-bit Windows, restored (removed upstream in 7ad0cc3e571). An x64 Windows
+@rem runs x86 binaries natively through WoW64, so the build's own tools - v8's
+@rem mksnapshot above all - run on the host and this is not a cross compile.
+@rem The toolchain is selected as amd64_x86 by msvs_host_arch below.
+if "%target_arch%"=="x86" if "%PROCESSOR_ARCHITECTURE%"=="AMD64" set configure_flags=%configure_flags% --no-cross-compiling
 
 if not exist "%~dp0deps\icu" goto no-depsicu
 if "%target%"=="Clean" echo deleting %~dp0deps\icu
