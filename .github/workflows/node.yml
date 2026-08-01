@@ -40,6 +40,11 @@ name: Node.js
 #   mac-* and freebsd-* - likewise their own hosts. macOS x64 and arm64 are on
 #     nodejs.org already; FreeBSD builds Node from ports.
 #
+# A release carries exactly ONE run's binaries. Re-running replaces what it
+# rebuilds and deletes what it does not, so the assets on a release are never a
+# mixture of builds from different days - which is what makes a failing platform
+# possible to debug at all.
+#
 # Run it from the Actions page (Run workflow) or:
 #   gh workflow run node.yml -f version=v24.18.1
 #
@@ -324,41 +329,17 @@ jobs:
           BARE="${V#v}"                 # 24.18.1
           MAJOR="${BARE%%.*}"           # 24
 
-          # 1. Which platforms the release will CARRY once this run has
-          #    uploaded - which is not the same as which ones this run built.
+          # 1. Which platforms THIS RUN built. That is the whole list: the
+          #    publish step below deletes every node-* asset this run did not
+          #    produce, so a release carries exactly one run's binaries and
+          #    "which build is this binary from" is never a question.
           #
-          #    A re-run replaces the binaries it built (gh release upload
-          #    --clobber, below) and leaves the others alone, so after a partial
-          #    run the release holds a mix: today's for the platforms that built
-          #    now, an earlier run's for the rest. Notes written from dist/ alone
-          #    would list only the first group, and somebody downloading one of
-          #    the others would find a binary the notes never mention.
-          #
-          #    So it is the UNION: what is in dist/ now, plus what is already
-          #    attached to the release. The log says which is which, because
-          #    "this one is older than the notes above it" is worth knowing.
           # `|| true`: when EVERY build fails there are no artifacts, dist/ does
           # not exist, and `ls` exits 2 - which under `set -e` killed this step
           # with a bare "Process completed with exit code 2" and no word about
           # what was actually wrong. The empty case is handled below, where it
           # can say so.
-          built="$( (ls dist 2>/dev/null || true) | sed -n 's#^node-\(.*\)#\1#p' | sed 's#\.exe$##' | sort -u)"
-          existing="$( (gh release view "$V" --json assets \
-                          --jq '.assets[].name' 2>/dev/null || true) \
-                        | sed -n 's#^node-\(.*\)#\1#p' | sed 's#\.exe$##' | sort -u)"
-          # Empty lines filtered on BOTH sides: with nothing built, `printf` still
-          # prints one, and an empty string would then be reported as a platform.
-          kept="$(comm -13 <(printf '%s\n' $built | sed '/^$/d' | sort -u) \
-                           <(printf '%s\n' $existing | sed '/^$/d' | sort -u) | tr '\n' ' ')"
-          echo "Built by this run:            ${built:-(none)}"
-          echo "Already on the release:       ${existing:-(none)}"
-          echo "Kept from an earlier run:     ${kept:-(none)}"
-          # ONE PLATFORM PER LINE. `$built` and `$existing` are space-separated,
-          # so printing them as two lines leaves "i386 loong64" as a single line
-          # - and the loop below matches with `grep -qx`, which wants the whole
-          # line, so every platform would fail to match and the list would come
-          # out empty.
-          present="$(printf '%s\n%s\n' "$built" "$existing" | tr ' ' '\n' | sed '/^$/d' | sort -u)"
+          present="$( (ls dist 2>/dev/null || true) | sed -n 's#^node-\(.*\)#\1#p' | sed 's#\.exe$##' | sort -u)"
           plats=""
           for a in i386 armhf armv7 loong64 win32; do
             printf '%s\n' "$present" | grep -qx "$a" && plats="${plats:+$plats }$a"
@@ -402,7 +383,7 @@ jobs:
             echo ""
             echo "Platforms: $plats_csv"
             echo ""
-            echo "Built by node.yml from the wekan/node fork. One node-<platform> executable per platform, no archive. Re-running the workflow replaces the binaries it rebuilds, in place, on this same release."
+            echo "Built by node.yml from the wekan/node fork. One node-<platform> executable per platform, no archive. Every binary here is from the SAME run: re-running the workflow replaces what it rebuilds and removes what it does not, so a release never mixes builds."
             echo ""
             cat upstream-notes.md
           } > release-notes.md
@@ -424,11 +405,11 @@ jobs:
             echo "::error::No binaries were built - nothing to publish."
             exit 1
           fi
-          # --clobber is what makes a re-run REPLACE: an asset of the same name
-          # is overwritten in place rather than the upload failing on it, so
-          # the release always carries the newest binary built for a platform.
-          # Without it a fixed build could not be published to the release the
-          # broken one is already attached to.
+          # --clobber is half of what makes a re-run replace the last one: an
+          # asset of the same name is overwritten in place rather than the
+          # upload failing on it, so a fixed build can be published to the
+          # release the broken one is attached to. The sweep below is the other
+          # half - it removes the platforms this run did NOT build.
           # --target pins a NEW tag to the commit that was built rather than to
           # whatever the default branch has moved to since.
           if gh release view "$V" >/dev/null 2>&1; then
@@ -440,3 +421,36 @@ jobs:
               --target "${{ github.sha }}" \
               --notes-file "$NOTES_FILE"
           fi
+
+          # Then take away everything this run did not produce, so the release
+          # carries exactly ONE run's binaries.
+          #
+          # Without this a release accumulates: a platform that built in March
+          # and has failed ever since keeps its March binary sitting beside
+          # today's, indistinguishable from them, and "which run is this from"
+          # becomes a question you cannot answer from the release page. Fixing a
+          # build then means comparing against a binary whose provenance nobody
+          # knows, which is the opposite of debugging.
+          #
+          # AFTER the upload, never before: if an upload fails, the release
+          # keeps what it had rather than being emptied first and then not
+          # refilled.
+          #
+          # Only `node-*` is swept. Anything else attached to the release was
+          # put there by somebody on purpose and is not this workflow's to
+          # remove.
+          mine=""
+          for a in "${assets[@]}"; do
+            mine="$mine $(basename "$a")"
+          done
+          gh release view "$V" --json assets --jq '.assets[].name' \
+            | grep '^node-' \
+            | while read -r name; do
+                if printf ' %s ' "$mine" | grep -q " $name "; then
+                  continue
+                fi
+                echo "Deleting $name: not built by this run."
+                gh release delete-asset "$V" "$name" --yes
+              done
+          echo "The release now carries exactly what this run built:"
+          gh release view "$V" --json assets --jq '.assets[].name'
