@@ -1,0 +1,294 @@
+name: Node.js i386 armhf armv7
+
+# Build this fork's Node.js 24.x for the three 32-bit platforms nodejs.org does
+# not publish a binary for, and attach one executable per platform to the
+# GitHub Release of that version — the same shape wekan/FerretDB's
+# release-all.yml has: individual per-arch assets, no zip, so a consumer
+# downloads only the one file for the platform it targets.
+#
+#   node-i386    32-bit x86      (--dest-cpu=x86)
+#   node-armhf   32-bit ARM      hard-float, VFPv3-D16 — the Debian armhf
+#                                baseline, so it runs on any ARMv7-A without
+#                                assuming NEON
+#   node-armv7   32-bit ARM      hard-float, NEON — ARMv7-A tuned, for boards
+#                                that have it
+#
+# armhf and armv7 are both 32-bit hard-float ARM: the difference is the FPU
+# baseline, which is the difference that matters on the older boards this exists
+# for. Keeping both is deliberate.
+#
+# NOTHING has been removed from this fork's source for these platforms - the
+# support is upstream's and it is intact:
+#   * configure.py's valid_arch still has `arm`, `ia32` and `x86`, and
+#     --with-arm-float-abi / --with-arm-fpu still take their full range;
+#   * V8's 32-bit ports are present (deps/v8/src/codegen/arm and .../ia32);
+#   * BUILDING.md lists x86 and armv7 as Experimental - which means "buildable,
+#     not released", not "gone". The only commit that ever removed a 32-bit
+#     target was 7ad0cc3e571, and that is 32-bit WINDOWS.
+# So what was missing was the BUILD, not the code, and that is what this adds.
+#
+# Run it from the Actions page (Run workflow) or:
+#   gh workflow run node.yml -f version=v24.18.1
+#
+# Leave `version` empty and it is read from src/node_version.h, which is what
+# the release commit for a version sets - so the default is always "the version
+# this branch IS".
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag, e.g. v24.18.1 (empty = read src/node_version.h)'
+        required: false
+        type: string
+      publish:
+        description: 'Attach the binaries to the GitHub Release'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+# Two runs against one release would race on the same assets. A second run waits
+# for the first rather than clobbering it half way through.
+concurrency:
+  group: node-32bit-${{ inputs.version || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # One job per platform, so the three build in PARALLEL and one failing does
+  # not take the other two down (fail-fast: false) - a platform that breaks is
+  # then a single red job with its own log, not "the build failed".
+  build:
+    name: build ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 32-bit x86 builds INSIDE an i386 container rather than cross
+          # compiling: an x86_64 CPU runs i386 code natively, so this is a
+          # native build at native speed, and configure sees a real i386 host
+          # instead of having to be told it is cross compiling.
+          #
+          # `docker run`, NOT the job-level `container:` key: the Actions runner
+          # injects its own x86_64 Node.js into a job container to run the
+          # actions with, and an i386 image has no 64-bit loader to start it -
+          # checkout itself would fail. Checking out on the HOST and compiling
+          # in the container keeps the actions on x64 and the compiler on i386.
+          - platform: i386
+            mode: container
+            image: i386/debian:bookworm
+            docker_platform: linux/386
+            configure_flags: --dest-cpu=x86 --dest-os=linux
+          # 32-bit ARM cross compiles on the amd64 runner. `--cross-compiling`
+          # makes configure set want_separate_host_toolset, so V8 builds
+          # mksnapshot with the HOST compiler and the target objects with the
+          # cross one; without it the build produces ARM tools it cannot run.
+          # configure reads __ARM_ARCH out of $CC, so arm_version is picked up
+          # from the cross compiler itself rather than from the runner.
+          - platform: armhf
+            mode: cross
+            triple: arm-linux-gnueabihf
+            apt_packages: crossbuild-essential-armhf
+            configure_flags: >-
+              --dest-cpu=arm --dest-os=linux --cross-compiling
+              --with-arm-float-abi=hard --with-arm-fpu=vfpv3-d16
+          - platform: armv7
+            mode: cross
+            triple: arm-linux-gnueabihf
+            apt_packages: crossbuild-essential-armhf
+            configure_flags: >-
+              --dest-cpu=arm --dest-os=linux --cross-compiling
+              --with-arm-float-abi=hard --with-arm-fpu=neon
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the cross toolchain
+        if: matrix.mode == 'cross'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ${{ matrix.apt_packages }} python3 ninja-build
+
+      - name: Build (native i386, in a container)
+        if: matrix.mode == 'container'
+        run: |
+          set -euo pipefail
+          # The build tools INSIDE the i386 image, so every compiler, linker and
+          # library the build picks up is 32-bit. `--platform` is honoured on an
+          # amd64 host without any emulation layer.
+          docker run --rm --platform ${{ matrix.docker_platform }} \
+            -v "$PWD":/src -w /src \
+            -e MAKEFLAGS="-j$(nproc)" \
+            ${{ matrix.image }} \
+            sh -c '
+              set -eu
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                build-essential python3 ninja-build ca-certificates
+              ./configure ${{ matrix.configure_flags }}
+              make -j"$(nproc)"
+              strip out/Release/node
+            '
+
+      - name: Build (cross compile)
+        if: matrix.mode == 'cross'
+        env:
+          CC: ${{ matrix.triple }}-gcc
+          CXX: ${{ matrix.triple }}-g++
+          AR: ${{ matrix.triple }}-ar
+          RANLIB: ${{ matrix.triple }}-ranlib
+          LINK: ${{ matrix.triple }}-g++
+          # The HOST half of the split toolset: mksnapshot and the other build
+          # tools run on the runner, so they are built with the runner's own
+          # compiler while everything shipped is built with the cross one.
+          CC_host: gcc
+          CXX_host: g++
+        run: |
+          set -euo pipefail
+          ./configure ${{ matrix.configure_flags }}
+          make -j"$(nproc)"
+          ${{ matrix.triple }}-strip out/Release/node
+
+      - name: Name it for the release, and say what it is
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp out/Release/node "dist/node-${{ matrix.platform }}"
+          chmod +x "dist/node-${{ matrix.platform }}"
+          # `file` on the result is the one check worth having in the log: it is
+          # how a build that quietly produced an x86_64 binary - because a
+          # cross-compile flag was dropped - is caught before it is published as
+          # an ARM one.
+          file "dist/node-${{ matrix.platform }}"
+          ls -l "dist/node-${{ matrix.platform }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.platform }}
+          path: dist/node-${{ matrix.platform }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # Every binary that built, attached to the release of this version, with the
+  # notes composed here. `always()` so two good platforms are still published
+  # when a third fails - the release then simply lists the two it has.
+  publish:
+    name: attach to the release
+    needs: build
+    if: ${{ always() && inputs.publish }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Resolve the version
+        id: ver
+        run: |
+          set -euo pipefail
+          V="${{ inputs.version }}"
+          if [ -z "$V" ]; then
+            # src/node_version.h is what the release commit for a version sets,
+            # so this is always the version the branch actually is.
+            MAJOR=$(sed -n 's/^#define NODE_MAJOR_VERSION \([0-9]*\).*/\1/p' src/node_version.h)
+            MINOR=$(sed -n 's/^#define NODE_MINOR_VERSION \([0-9]*\).*/\1/p' src/node_version.h)
+            PATCH=$(sed -n 's/^#define NODE_PATCH_VERSION \([0-9]*\).*/\1/p' src/node_version.h)
+            V="v${MAJOR}.${MINOR}.${PATCH}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Release version: $V"
+
+      - name: Compose the release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          BARE="${V#v}"                 # 24.18.1
+          MAJOR="${BARE%%.*}"           # 24
+
+          # 1. Which platforms actually built. Listed from what is in dist/, in
+          #    a fixed order, so a failed platform is absent from the notes
+          #    rather than promised and missing.
+          present="$(ls dist 2>/dev/null | sed -n 's#^node-\(.*\)#\1#p' | sort -u)"
+          plats=""
+          for a in i386 armhf armv7; do
+            printf '%s\n' "$present" | grep -qx "$a" && plats="${plats:+$plats }$a"
+          done
+          for a in $present; do
+            printf ' %s ' "i386 armhf armv7" | grep -q " $a " || plats="${plats:+$plats }$a"
+          done
+          [ -n "$plats" ] || plats="(none built)"
+          # Comma-separated for the `Platforms:` line, which is the form the
+          # FerretDB releases use; the sentence above it keeps the plain spaces
+          # it is read as.
+          plats_csv="$(printf '%s' "$plats" | sed 's/ /, /g')"
+
+          # 2. The upstream release notes for this exact version, out of the
+          #    changelog this fork carries. Sections are anchored
+          #    `<a id="24.18.1"></a>` and run to the next `<a id="`, which is a
+          #    firmer boundary than the `## <date>, Version ...` heading.
+          CHANGELOG="doc/changelogs/CHANGELOG_V${MAJOR}.md"
+          : > upstream-notes.md
+          if [ -f "$CHANGELOG" ]; then
+            awk -v ver="$BARE" '
+              $0 ~ ("^<a id=\"" ver "\"></a>") { inblock=1; next }
+              inblock && /^<a id="/ { exit }
+              inblock { print }
+            ' "$CHANGELOG" > upstream-notes.md
+            sed -i -e '/./,$!d' upstream-notes.md
+          fi
+          if [ ! -s upstream-notes.md ]; then
+            echo "::warning::No $CHANGELOG section for $BARE - the notes will carry the header only."
+          fi
+
+          # 3. The header xet7 asked for, then the platforms, then upstream's
+          #    own notes for that version underneath.
+          {
+            echo "Node.js JavaScript runtime ✨🐢🚀✨"
+            echo ""
+            echo "$plats that are not at https://nodejs.org/dist/$V/ and https://unofficial-builds.nodejs.org/download/release/$V/"
+            echo ""
+            echo "Platforms: $plats_csv"
+            echo ""
+            echo "Built by node.yml from the wekan/node fork. One node-<platform> executable per platform, no archive."
+            echo ""
+            cat upstream-notes.md
+          } > release-notes.md
+
+          echo "----- release notes for $V -----"
+          cat release-notes.md
+          echo "notes_file=release-notes.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update the release, with a binary per platform
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.version }}"
+          NOTES_FILE="${{ steps.notes.outputs.notes_file }}"
+          shopt -s nullglob
+          assets=(dist/node-*)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::error::No binaries were built - nothing to publish."
+            exit 1
+          fi
+          # --clobber so re-running the workflow replaces the same-named assets
+          # instead of failing on them, and --target pins a NEW tag to the commit
+          # that was built rather than to whatever the default branch moved to.
+          if gh release view "$V" >/dev/null 2>&1; then
+            gh release upload "$V" "${assets[@]}" --clobber
+            gh release edit "$V" --title "$V" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$V" "${assets[@]}" \
+              --title "$V" \
+              --target "${{ github.sha }}" \
+              --notes-file "$NOTES_FILE"
+          fi
