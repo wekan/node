@@ -80,15 +80,16 @@ jobs:
   # then a single red job with its own log, not "the build failed".
   build:
     name: build ${{ matrix.platform }}
-    # 350, not the 300 this started with: the ARM containers run under QEMU and
-    # a full Node build there is hours. 360 is the ceiling GitHub allows, and a
-    # job that is killed at 300 having done five hours of work tells nobody
-    # anything. ../log/node/TODO.txt says what to do if even this is not enough.
+    # 180. Nothing here is emulated any more - see armhf below - so every job
+    # compiles at the runner's own speed, and the ARM ones no longer need the
+    # 350 minutes they used to be killed at. A limit that is roughly twice a
+    # good build is the useful kind: a build that hangs is stopped in a couple
+    # of hours instead of burning six.
     # Linux platforms cross compile (or build in a container) on the Linux
     # runner; win32 needs a Windows one with MSVC, so the runner comes from the
     # matrix rather than being fixed.
     runs-on: ${{ matrix.runs_on || 'ubuntu-latest' }}
-    timeout-minutes: 350
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -115,36 +116,57 @@ jobs:
             # linux-x86, so they rotted. The C implementations are slower at
             # crypto and they compile.
             configure_flags: --dest-cpu=x86 --dest-os=linux --openssl-no-asm
-          # 32-bit ARM builds AS the target, in an armhf container, and NOT by
-          # cross compiling - which was tried and cannot work with this build
-          # system. V8 says so itself, in deps/v8/include/v8config.h:
+          # 32-bit ARM CROSS COMPILES, from a 32-bit x86 host. V8 states the
+          # rule itself, in deps/v8/include/v8config.h:
           #
           #     #if (V8_TARGET_ARCH_ARM && !(V8_HOST_ARCH_IA32 || V8_HOST_ARCH_ARM))
           #     #error Target architecture arm is only supported on arm and ia32 host
           #
-          # An ARM32 target therefore needs an ARM or 32-bit x86 HOST. V8's own
-          # GN build gets around that with a simulator build; node's GYP files
-          # have no USE_SIMULATOR anywhere, so that door is shut here. The cross
-          # attempt failed exactly there, compiling out/Release/obj.host.
+          # An ARM32 target needs an ARM or a 32-bit x86 host - and ia32 IS
+          # allowed, which is what this uses. The half that was missing before
+          # is in deps/v8/src/common/globals.h:
           #
-          # So the container is the answer, as it is for i386 - except that an
-          # x86_64 runner has no ARM CPU, so this one runs under QEMU and is
-          # SLOW. See ../log/node/TODO.txt: if it does not fit in the job limit,
-          # the fix is a builder that is actually 32-bit-ARM-capable, which is
-          # how nodejs.org's own armv7 builds are made.
+          #     #if (V8_TARGET_ARCH_ARM && !V8_HOST_ARCH_ARM)
+          #     #define USE_SIMULATOR 1
+          #
+          # V8 turns its ARM simulator on BY ITSELF whenever the host is not
+          # ARM, so mksnapshot - a host binary that has to run ARM code to
+          # write the snapshot - simulates it. Nothing in the gyp files has to
+          # ask for that, and the earlier x64-host attempt did not fail for
+          # want of a simulator: it failed on the v8config.h check above,
+          # because an x86_64 host is not one of the two hosts it allows.
+          #
+          # This replaces the arm32v7-container-under-QEMU build these two jobs
+          # used to be. That one could never have finished: ../log/node3/armhf.txt
+          # is still compiling V8 five hours and fifty minutes in when the
+          # 350-minute limit kills it, and six hours is GitHub's ceiling for a
+          # job. The i386 container is not emulated - an x86_64 runner runs
+          # i386 natively - so the compiler runs at full speed and only the
+          # snapshot is simulated.
+          #
+          # What it costs: a cross build cannot run the binary it just made, so
+          # configure turns node_use_node_snapshot off (it does the same for
+          # loong64) and these two start a little slower than a natively built
+          # node. V8's own snapshot is still there - that is the simulated one
+          # above. A runtime that starts slightly slower beats the one nobody
+          # can build.
           - platform: armhf
-            mode: container
-            image: arm32v7/debian:bookworm
-            docker_platform: linux/arm/v7
+            mode: cross-container
+            image: i386/debian:bookworm
+            docker_platform: linux/386
+            triple: arm-linux-gnueabihf
+            apt_packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
             configure_flags: >-
-              --dest-cpu=arm --dest-os=linux
+              --dest-cpu=arm --dest-os=linux --cross-compiling
               --with-arm-float-abi=hard --with-arm-fpu=vfpv3-d16
           - platform: armv7
-            mode: container
-            image: arm32v7/debian:bookworm
-            docker_platform: linux/arm/v7
+            mode: cross-container
+            image: i386/debian:bookworm
+            docker_platform: linux/386
+            triple: arm-linux-gnueabihf
+            apt_packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
             configure_flags: >-
-              --dest-cpu=arm --dest-os=linux
+              --dest-cpu=arm --dest-os=linux --cross-compiling
               --with-arm-float-abi=hard --with-arm-fpu=neon
           # LoongArch64. Node has supported it since configure.py learned
           # `loong64` and V8 carries a full port (deps/v8/src/codegen/loong64),
@@ -164,7 +186,16 @@ jobs:
             image: debian:trixie
             triple: loongarch64-linux-gnu
             apt_packages: gcc-loongarch64-linux-gnu g++-loongarch64-linux-gnu
-            configure_flags: --dest-cpu=loong64 --dest-os=linux --cross-compiling
+            # --openssl-no-asm: deps/openssl ships ONE loongarch config and it
+            # is config/archs/linux64-loongarch64/no-asm - there is no asm one.
+            # openssl_asm.gypi has no loong64 branch either, so with asm the
+            # build silently fell through to its default, linux-x86_64/asm, and
+            # handed the LoongArch compiler x86_64 flags: "loongarch64-linux-gnu-gcc:
+            # error: unrecognized command-line option '-m64'". Asking for the
+            # no-asm build is asking for the only openssl this architecture has.
+            configure_flags: >-
+              --dest-cpu=loong64 --dest-os=linux --cross-compiling
+              --openssl-no-asm
           # 32-bit Windows. nodejs.org stopped publishing it and upstream removed
           # the build itself in 7ad0cc3e571 ("build: remove support for 32-bit
           # Windows"); this fork puts the removed pieces back - see the commit
@@ -181,13 +212,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Only the ARM containers need it: an x86_64 runner runs i386 natively,
-      # and the loong64 build is a CROSS compile in a Debian container, so it
-      # runs at native speed too. Registering binfmt for a CPU that is not
-      # emulated costs a step and buys nothing.
-      - name: Set up QEMU
-        if: matrix.docker_platform == 'linux/arm/v7'
-        uses: docker/setup-qemu-action@v3
+      # There is no QEMU step any more, and there is nothing left to register
+      # it for: i386 and the i386 cross containers run natively on an x86_64
+      # runner, and loong64 is a cross compile in an x86_64 container. Every
+      # job here builds on the CPU it is running on.
 
       - name: Build (in a container of the target architecture)
         if: matrix.mode == 'container'
@@ -195,13 +223,11 @@ jobs:
           set -euo pipefail
           # The build tools INSIDE the target's own image, so the compiler, the
           # linker and every library are the target's - and, which is the point,
-          # so is the HOST as far as V8 is concerned. V8 refuses an ia32 or ARM32
-          # target on any other host (deps/v8/include/v8config.h), so this is not
-          # a convenience: it is the only arrangement that builds.
+          # so is the HOST as far as V8 is concerned. V8 refuses an ia32 target
+          # on any other host (deps/v8/include/v8config.h), so this is not a
+          # convenience: it is the only arrangement that builds.
           #
-          # i386 needs no emulation - an x86_64 CPU runs it natively. The ARM
-          # containers do, through the QEMU registered above, and are slow for
-          # it.
+          # i386 needs no emulation - an x86_64 CPU runs it natively.
           docker run --rm --platform ${{ matrix.docker_platform }} \
             -v "$PWD":/src -w /src \
             -e MAKEFLAGS="-j$(nproc)" \
@@ -221,12 +247,19 @@ jobs:
         run: |
           set -euo pipefail
           # The container supplies the CROSS COMPILER, not the CPU: this runs on
-          # the runner's own x86_64 and produces loong64 objects, so it is as
-          # fast as any other cross build. CC_host/CXX_host are the host half of
-          # the split toolset - mksnapshot and the other build tools have to run
-          # here, so they are built with the container's native compiler while
-          # everything shipped is built with the cross one.
-          docker run --rm -v "$PWD":/src -w /src \
+          # the runner's own x86_64 and produces loong64 or ARM32 objects, so it
+          # is as fast as any other cross build. CC_host/CXX_host are the host
+          # half of the split toolset - mksnapshot and the other build tools
+          # have to run here, so they are built with the container's native
+          # compiler while everything shipped is built with the cross one.
+          #
+          # --platform is what picks WHICH host: loong64 cross compiles from the
+          # runner's own x86_64, but ARM32 has to be cross compiled from a
+          # 32-bit x86 host (v8config.h - see the matrix), so its container is
+          # an i386 one. Either way the CPU underneath is the runner's, and
+          # nothing is emulated.
+          docker run --rm --platform "${{ matrix.docker_platform || 'linux/amd64' }}" \
+            -v "$PWD":/src -w /src \
             -e CC="${{ matrix.triple }}-gcc" \
             -e CXX="${{ matrix.triple }}-g++" \
             -e AR="${{ matrix.triple }}-ar" \
@@ -244,6 +277,19 @@ jobs:
               make -j"$(nproc)"
               ${{ matrix.triple }}-strip out/Release/node
             '
+
+      # openssl's 32-bit Windows assembly is NASM syntax and the runner image
+      # has no NASM, so the first run answered "Could not find NASM" and
+      # configure quietly fell back to openssl_no_asm - a working binary with
+      # the slow C implementations of every cipher. Installing it takes seconds
+      # and gets the assembly back. continue-on-error because that fallback is
+      # automatic (configure.py sets openssl_no_asm when nasm is missing): if
+      # the install flakes, the build is slower, not broken.
+      - name: Install NASM, so openssl keeps its assembly
+        if: matrix.mode == 'windows'
+        continue-on-error: true
+        shell: cmd
+        run: choco install nasm -y --no-progress
 
       - name: Build (32-bit Windows)
         if: matrix.mode == 'windows'

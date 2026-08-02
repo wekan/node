@@ -38,6 +38,15 @@
             }],
             ['arm_fpu=="neon"', {
               'defines': [ 'ADLER32_SIMD_NEON' ],
+              'conditions': [
+                # On arm64 NEON is part of the architecture and the compiler
+                # needs no telling. On 32-bit ARM it is an extension: the file
+                # is compiled as plain ARMv7-A and every NEON intrinsic in it
+                # then fails to inline - "target specific option mismatch".
+                ['target_arch=="arm"', {
+                  'cflags': [ '-mfpu=neon' ],
+                }],
+              ],
             }],
           ],
           'include_dirs': [ '<(ZLIB_ROOT)' ],
@@ -148,6 +157,22 @@
                 ['target_arch=="x64"', {
                   'defines': [ 'INFLATE_CHUNK_READ_64LE' ],
                 }],
+                # SSE2 is part of x86_64 and needs no flag there. On 32-bit x86
+                # it is not: gcc targets plain i686 and rejects every SSE2
+                # intrinsic this file uses. Node's ia32 build already requires
+                # an SSE2 CPU - V8's ia32 code generator emits SSE2 - so this
+                # asks the compiler for what the binary needs anyway.
+                ['target_arch=="ia32" and (OS!="win" or clang==1)', {
+                  'cflags': [ '-msse2' ],
+                  'xcode_settings': {
+                    'OTHER_CFLAGS': [ '-msse2' ],
+                  },
+                  'msvs_settings': {
+                    'VCCLCompilerTool': {
+                      'AdditionalOptions': [ '-msse2' ],
+                    },
+                  },
+                }],
               ],
             }],
             ['arm_fpu=="neon"', {
@@ -155,6 +180,10 @@
               'conditions': [
                 ['target_arch=="arm64"', {
                   'defines': [ 'INFLATE_CHUNK_READ_64LE' ],
+                }],
+                # See zlib_adler32_simd above: 32-bit ARM has to be told.
+                ['target_arch=="arm"', {
+                  'cflags': [ '-mfpu=neon' ],
                 }],
               ],
             }],
@@ -221,6 +250,20 @@
                 ['target_arch=="x64"', {
                   'defines': [ 'INFLATE_CHUNK_READ_64LE' ],
                 }],
+                # deflate.c pulls in slide_hash_simd.h, which is SSE2 for x86.
+                # Same reason as zlib_data_chunk_simd above: x86_64 has SSE2,
+                # 32-bit x86 has to be told it may use it.
+                ['target_arch=="ia32" and (OS!="win" or clang==1)', {
+                  'cflags': [ '-msse2' ],
+                  'xcode_settings': {
+                    'OTHER_CFLAGS': [ '-msse2' ],
+                  },
+                  'msvs_settings': {
+                    'VCCLCompilerTool': {
+                      'AdditionalOptions': [ '-msse2' ],
+                    },
+                  },
+                }],
               ],
             }],
             ['arm_fpu=="neon"', {
@@ -236,13 +279,30 @@
                     ['OS!="ios"', {
                       'dependencies': [
                         'zlib_adler32_simd',
-                        'zlib_arm_crc32',
+                      ],
+                      'conditions': [
+                        # zlib_arm_crc32 is ARMv8, not NEON: its one source
+                        # file is compiled -march=armv8-a+aes+crc, and a
+                        # 32-bit ARM compiler rejects that outright (+aes is
+                        # an AArch64-only modifier). An ARMv7 binary has no
+                        # business carrying ARMv8 CRC instructions either.
+                        # arm_fpu=="neon" means "this target has NEON", which
+                        # every arm64 has and an ARMv7-A board may; only arm64
+                        # implies ARMv8, so only arm64 takes this dependency.
+                        ['target_arch=="arm64"', {
+                          'dependencies': [ 'zlib_arm_crc32' ],
+                        }],
                       ],
                     }],
                   ],
                 }],
                 ['target_arch=="arm64"', {
                   'defines': [ 'INFLATE_CHUNK_READ_64LE' ],
+                }],
+                # deflate.c's slide_hash_simd.h is NEON here. 32-bit ARM has
+                # to be told it may use it; on arm64 NEON is the baseline.
+                ['target_arch=="arm"', {
+                  'cflags': [ '-mfpu=neon' ],
                 }],
               ],
             }],

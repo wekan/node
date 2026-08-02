@@ -273,7 +273,7 @@ if "%target%"=="TestClean" (
 call tools\msvs\find_python.cmd
 if errorlevel 1 goto :exit
 
-REM NASM is only needed on x86_64.
+REM NASM is only needed on IA32 and x86_64.
 if not defined openssl_no_asm if "%target_arch%" NEQ "arm64" call tools\msvs\find_nasm.cmd
 if errorlevel 1 echo Could not find NASM, install it or build with openssl-no-asm. See BUILDING.md.
 
@@ -436,6 +436,12 @@ set "msbcpu=/m:2"
 if "%NUMBER_OF_PROCESSORS%"=="1" set "msbcpu=/m:1"
 set "msbplatform=x64"
 if "%target_arch%"=="arm64" set "msbplatform=ARM64"
+@rem Restored with 32-bit Windows (removed upstream in 7ad0cc3e571). gyp names
+@rem the ia32 solution configuration "Win32" - common.gypi sets
+@rem msvs_configuration_platform for x64 and arm64 only, and "Win32" is gyp's
+@rem default - so without this line an x86 build generates Release|Win32 and
+@rem then asks msbuild for Release|x64, which answers MSB4126.
+if "%target_arch%"=="x86" set "msbplatform=Win32"
 if "%target%"=="Build" (
   if defined no_cctest set target=node
   if "%test_args%"=="" set target=node
@@ -882,7 +888,7 @@ set exit_code=1
 goto exit
 
 :help
-echo vcbuild.bat [debug/release] [msi] [doc] [test/test-all/test-addons/test-doc/test-js-native-api/test-node-api/test-internet/test-tick-processor/test-known-issues/test-node-inspect/test-check-deopts/test-npm/test-v8/test-v8-intl/test-v8-benchmarks/test-v8-all] [ignore-flaky] [static/dll] [noprojgen] [projgen] [clang-cl] [ccache path-to-ccache] [small-icu/full-icu/without-intl] [nobuild] [nosnapshot] [nonpm] [nocorepack] [ltcg] [thin-lto] [lto] [pgo-generate] [pgo-use] [licensetf] [sign] [x64/arm64] [vs2022/vs2026] [download-all] [enable-vtune] [lint/lint-ci/lint-js/lint-md] [lint-md-build] [format-md] [package] [build-release] [upload] [no-NODE-OPTIONS] [link-module path-to-module] [debug-http2] [debug-nghttp2] [clean] [cctest] [no-cctest] [openssl-no-asm]
+echo vcbuild.bat [debug/release] [msi] [doc] [test/test-all/test-addons/test-doc/test-js-native-api/test-node-api/test-internet/test-tick-processor/test-known-issues/test-node-inspect/test-check-deopts/test-npm/test-v8/test-v8-intl/test-v8-benchmarks/test-v8-all] [ignore-flaky] [static/dll] [noprojgen] [projgen] [clang-cl] [ccache path-to-ccache] [small-icu/full-icu/without-intl] [nobuild] [nosnapshot] [nonpm] [nocorepack] [ltcg] [thin-lto] [lto] [pgo-generate] [pgo-use] [licensetf] [sign] [ia32/x86/x64/arm64] [vs2022/vs2026] [download-all] [enable-vtune] [lint/lint-ci/lint-js/lint-md] [lint-md-build] [format-md] [package] [build-release] [upload] [no-NODE-OPTIONS] [link-module path-to-module] [debug-http2] [debug-nghttp2] [clean] [cctest] [no-cctest] [openssl-no-asm]
 echo Examples:
 echo   vcbuild.bat                          : builds release build
 echo   vcbuild.bat debug                    : builds debug build
