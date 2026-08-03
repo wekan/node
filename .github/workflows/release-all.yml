@@ -1,4 +1,4 @@
-name: Node.js
+name: Release all
 
 # Build this fork's Node.js 24.x for EVERY platform WeKan ships a bundle for, and
 # attach one executable per platform to the GitHub Release of that version — the
@@ -88,6 +88,30 @@ on:
         required: false
         default: true
         type: boolean
+      platforms:
+        description: 'JSON array of platforms to build, e.g. ["armhf","win32"] (empty = all of them)'
+        required: false
+        default: ''
+        type: string
+
+  # Called by release-all-missing.yml, which works out which platforms a release
+  # is short of and passes them as `platforms`. The build itself is HERE and
+  # only here: a second copy of thirteen platforms' compile steps would drift
+  # from this one, and then a binary added later would not match the binaries
+  # beside it on the same release.
+  workflow_call:
+    inputs:
+      version:
+        required: false
+        type: string
+      publish:
+        required: false
+        default: true
+        type: boolean
+      platforms:
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
@@ -104,6 +128,11 @@ jobs:
   # then a single red job with its own log, not "the build failed".
   build:
     name: build ${{ matrix.platform }}
+    # Empty `platforms` means all of them, which is what a plain run of this
+    # workflow passes. release-all-missing.yml passes the subset a release does
+    # not already carry, so the matrix stays the ONE list of thirteen platforms
+    # and only the selection changes.
+    if: ${{ inputs.platforms == '' || contains(fromJSON(inputs.platforms), matrix.platform) }}
     # Linux platforms cross compile (or build in a container) on the Linux
     # runner; win32 needs a Windows one with MSVC, so the runner comes from the
     # matrix rather than being fixed.
