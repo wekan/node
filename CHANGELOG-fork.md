@@ -4,18 +4,26 @@ This file lists what the [wekan/node](https://github.com/wekan/node) fork adds o
 top of upstream Node.js. Upstream's own changelog is untouched and lives in
 `CHANGELOG.md` and `doc/changelogs/`.
 
-**Why the fork exists.** Some CPU/OS combinations have no published Node.js at
-all: nodejs.org does not build them and
+**Why the fork exists.** It began with a gap: some CPU/OS combinations have no
+published Node.js at all — nodejs.org does not build them and
 [unofficial-builds](https://unofficial-builds.nodejs.org/) does not either. A
 machine with no runtime cannot run WeKan, however well WeKan is packaged, and
 [wekan/FerretDB](https://github.com/wekan/FerretDB) already builds a database
-for those same platforms. So this fork builds the runtime to go with it.
+for those same platforms, so this fork builds the runtime to go with it.
+
+It has since become the place **WeKan takes its Node.js from for every
+platform**, not only the ones with a gap, for two reasons. The fixes below are
+build-configuration fixes that any platform benefits from, and a set of WeKan
+bundles should not be half built on one Node.js and half on another depending on
+which CPU it is for. And a backstop only works if it covers everything: when
+nodejs.org or unofficial-builds has not published a version yet, this fork is
+what fills the gap, and it can only fill a gap it builds.
 
 **Base.** `v24.x`, on upstream
-[v24.18.1 'Krypton' (LTS)](https://github.com/nodejs/node/commit/9623d9ad85d37d2f0610ec4a82b48182cf2c6061),
-2026-07-29. The fork is current with `nodejs/node` `v24.x` as of 2026-08-03 —
-that release commit is the branch tip upstream, so there is nothing newer to
-merge.
+[v24.19.0 'Krypton' (LTS)](https://github.com/nodejs/node/commit/cdc1b38d40c),
+2026-08-03, merged in as of 2026-08-03. Every change listed below was checked
+after that merge: the set of files this fork touches is identical before and
+after, and every line it adds is byte for byte the same.
 
 **What is built.** One executable per platform, attached to the GitHub Release
 for that version — individual per-arch assets, no archive, so a consumer
@@ -23,19 +31,28 @@ downloads only the file it needs.
 
 | Asset | Platform | How it is built |
 | --- | --- | --- |
+| `node-x64` | 64-bit x86 Linux | native, on an x86_64 runner |
+| `node-arm64` | 64-bit ARM Linux | native, on an ARM runner |
 | `node-i386` | 32-bit x86 Linux | native, in an `i386/debian:bookworm` container |
 | `node-armhf` | 32-bit ARM Linux, hard-float, VFPv3-D16 | cross, from a 32-bit x86 host container |
 | `node-armv7` | 32-bit ARM Linux, hard-float, NEON | cross, from a 32-bit x86 host container |
+| `node-ppc64le` | PowerPC 64 LE Linux | cross, in a `debian:trixie` container |
+| `node-s390x` | IBM Z Linux | cross, in a `debian:trixie` container |
+| `node-riscv64` | RISC-V 64 Linux | cross, in a `debian:trixie` container |
 | `node-loong64` | LoongArch64 Linux | cross, in a `debian:trixie` container |
+| `node-win64.exe` | 64-bit Windows | native on a Windows runner, ClangCL |
 | `node-win32.exe` | 32-bit Windows | native on a Windows runner, ClangCL |
+| `node-mac-x64` | macOS Intel | native, on a macos-13 runner |
+| `node-mac-arm64` | macOS Apple silicon | native, on a macos-14 runner |
 
 `armhf` and `armv7` are both 32-bit hard-float ARM; the difference is the FPU
 baseline, which is the difference that matters on the boards this exists for.
 
 **Deliberately not built**, so the gaps are decisions rather than oversights:
 **armel** (ARMv5), because V8 dropped it years ago and a target that can only
-fail is worse than an honest gap; and **macOS** and **FreeBSD**, which need
-their own hosts rather than a cross compiler on Linux.
+fail is worse than an honest gap; and **FreeBSD**, which needs a FreeBSD host
+and has no runner - FreeBSD builds Node from ports, which is the answer there
+anyway.
 
 **Almost all of this is build configuration.** Two commits touch shipped source
 — the zlib SIMD flags and the V8 template disambiguator below — and both are
@@ -45,6 +62,57 @@ compiles.
 ## Changes
 
 Newest first.
+
+<details>
+<summary><a href="https://github.com/wekan/node/commit/0e319e128f440881d698f7cfbcc815f0c182fb48">Every platform is built here now, not only the ones nobody else builds</a>. Thanks to xet7.</summary>
+
+The fork started as "the CPUs nobody publishes a Node.js for". That is no
+longer what it is for: **WeKan takes its Node.js from here for every bundle**,
+which changes the requirement twice over.
+
+**The fixes.** What this fork carries that upstream does not is not 32-bit-only
+— the ICU genccode architecture name, the x86 `/SAFESEH` opt-out, the zlib SSE2
+and NEON flags, the V8 template disambiguator are build-configuration fixes. A
+set of WeKan bundles should not be half built on one Node.js and half on another
+depending on which CPU it is for.
+
+**The backstop.** A fallback only works if it covers everything. nodejs.org and
+unofficial-builds each publish on their own schedule, and when one is behind
+this fork is what fills the gap — which it can only do for a platform it builds.
+As this was written, unofficial-builds had only `x64-musl` for v24.19.0 while it
+had riscv64 and loong64 for v24.18.1, leaving riscv64 two releases behind.
+
+Eight platforms added, taking it from five to thirteen: **x64**, **arm64**,
+**ppc64le**, **s390x**, **riscv64**, **win64**, **mac-x64** and **mac-arm64**.
+x64, arm64 and both macOS builds run on a runner that IS the target CPU, so they
+need no container, no toolchain and no cross flags. riscv64 gets
+`--openssl-no-asm` for the same reason loong64 already did: `deps/openssl` has
+no asm config for it.
+
+`vcbuild.bat` is no longer called with a hardcoded `x86` — the Windows
+architecture comes from the matrix, so win32 and win64 share one step.
+
+</details>
+
+<details>
+<summary><a href="https://github.com/wekan/node/commit/62686ecf126f4bd66aa0acc8e4203b2771aad762">Merged upstream v24.19.0, with every fork change checked afterwards</a>. Thanks to xet7.</summary>
+
+240 commits from upstream `v24.x`, up to the
+[v24.19.0](https://github.com/nodejs/node/commit/cdc1b38d40c) release commit of
+2026-08-03. It merged with no conflicts.
+
+A clean merge is not by itself evidence that a fork survived it, so this was
+checked rather than assumed, two ways. The set of files this fork changes
+against its upstream base is **identical** before and after — the same eleven.
+And the fork's diff against its base is byte for byte the same: 164 added and
+removed lines before, 164 after, with every added line identical.
+
+So all of it is still here: the node.yml workflow, the `/SAFESEH:NO` opt-out in
+`common.gypi`, `configure.py`'s Windows `x86` → `ia32` host mapping, the V8
+`__ template Tuple` disambiguator, the zlib NEON and SSE2 flags, ICU's
+architecture name for genccode, and the `vcbuild.bat` Win32 configuration.
+
+</details>
 
 <details>
 <summary><a href="https://github.com/wekan/node/commit/0767aa19aefb72c0fe24b1638a4ed341b37fa3d9">Each platform gets the build timeout its build actually needs</a>. Thanks to xet7.</summary>
