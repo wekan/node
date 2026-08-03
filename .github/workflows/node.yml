@@ -1,22 +1,43 @@
 name: Node.js
 
-# Build this fork's Node.js 24.x for the three 32-bit platforms nodejs.org does
-# not publish a binary for, and attach one executable per platform to the
-# GitHub Release of that version — the same shape wekan/FerretDB's
-# release-all.yml has: individual per-arch assets, no zip, so a consumer
-# downloads only the one file for the platform it targets.
+# Build this fork's Node.js 24.x for EVERY platform WeKan ships a bundle for, and
+# attach one executable per platform to the GitHub Release of that version — the
+# same shape wekan/FerretDB's release-all.yml has: individual per-arch assets, no
+# zip, so a consumer downloads only the one file for the platform it targets.
 #
-#   node-i386    32-bit x86      (--dest-cpu=x86)
-#   node-armhf   32-bit ARM      hard-float, VFPv3-D16 — the Debian armhf
-#                                baseline, so it runs on any ARMv7-A without
-#                                assuming NEON
-#   node-armv7   32-bit ARM      hard-float, NEON — ARMv7-A tuned, for boards
-#                                that have it
-#   node-loong64 LoongArch64     (--dest-cpu=loong64) — V8 has the port, nobody
-#                                publishes the binary
-#   node-win32.exe 32-bit Windows — upstream REMOVED the build in 7ad0cc3e571;
-#                                this fork puts the removed pieces back and
-#                                builds it with ClangCL
+# WHY ALL OF THEM, when nodejs.org publishes several. Two reasons.
+#
+# The fixes. CHANGELOG-fork.md lists what this fork carries that upstream does
+# not, and they are not all 32-bit-only: the ICU, /SAFESEH and zlib flag fixes
+# are build-configuration fixes that any platform benefits from. WeKan takes its
+# Node.js from here for every bundle now, and a bundle set should not be half
+# built on one Node.js and half on another depending on which CPU it is for.
+#
+# The backstop. A fallback only works if it covers everything. When nodejs.org
+# or unofficial-builds has not published a version yet — riscv64 was two
+# releases behind when this was written, and unofficial-builds had only x64-musl
+# for v24.19.0 — the fork is what fills the gap, and it can only fill a gap it
+# builds.
+#
+#   node-x64       64-bit x86 Linux          native
+#   node-arm64     64-bit ARM Linux          native
+#   node-i386      32-bit x86                (--dest-cpu=x86)
+#   node-armhf     32-bit ARM                hard-float, VFPv3-D16 — the Debian
+#                                            armhf baseline, so it runs on any
+#                                            ARMv7-A without assuming NEON
+#   node-armv7     32-bit ARM                hard-float, NEON — ARMv7-A tuned,
+#                                            for boards that have it
+#   node-ppc64le   PowerPC 64 LE             cross
+#   node-s390x     IBM Z                     cross
+#   node-riscv64   RISC-V 64                 cross
+#   node-loong64   LoongArch64               (--dest-cpu=loong64) — V8 has the
+#                                            port, nobody else publishes it
+#   node-win64.exe 64-bit Windows
+#   node-win32.exe 32-bit Windows            upstream REMOVED the build in
+#                                            7ad0cc3e571; this fork puts the
+#                                            removed pieces back, ClangCL
+#   node-mac-x64   macOS Intel               native
+#   node-mac-arm64 macOS Apple silicon       native
 #
 # armhf and armv7 are both 32-bit hard-float ARM: the difference is the FPU
 # baseline, which is the difference that matters on the older boards this exists
@@ -37,8 +58,11 @@ name: Node.js
 #     is no Node.js for it anywhere and this fork cannot make one either; a build
 #     target that can only ever fail is worse than an honest gap.
 #   win-arm64 / win64 - nodejs.org publishes both, so there is nothing to add.
-#   mac-* and freebsd-* - likewise their own hosts. macOS x64 and arm64 are on
-#     nodejs.org already; FreeBSD builds Node from ports.
+#   freebsd-* - it needs a FreeBSD host, and there is no FreeBSD runner. FreeBSD
+#     builds Node from ports, which is the answer there anyway.
+#   (macOS used to be on this list, on the grounds that nodejs.org publishes it.
+#   It is built here now, for the two reasons at the top: the fork's fixes, and
+#   a backstop that covers everything.)
 #
 # A release carries exactly ONE run's binaries. Re-running replaces what it
 # rebuilds and deletes what it does not, so the assets on a release are never a
@@ -216,6 +240,81 @@ jobs:
               --dest-cpu=loong64 --dest-os=linux --cross-compiling
               --openssl-no-asm
             timeout_minutes: 300        # measured 148: cross build, but its host half is native amd64
+          # ── The architectures somebody else also builds ──────────────────
+          #
+          # These are on nodejs.org (x64, arm64, ppc64le, s390x) or on
+          # unofficial-builds (riscv64, loong64) already, so for a long time this
+          # fork did not build them: there was nothing to add.
+          #
+          # What changed is WHY the fork exists. It is no longer only "the CPUs
+          # nobody publishes" - it is where WeKan takes its Node.js from, for
+          # every platform, because the fixes in CHANGELOG-fork.md are fixes
+          # every platform benefits from and a bundle should not be built on two
+          # different Node.js builds depending on which CPU it is for. And a
+          # backstop only works if it covers everything: when nodejs.org or
+          # unofficial-builds has not published a version yet - riscv64 was two
+          # releases behind when this was written - the fork is what fills the
+          # gap, and it can only fill a gap it builds.
+          #
+          # x64 and arm64 build natively on a runner of their own CPU. The rest
+          # cross compile in a container that carries the toolchain, exactly as
+          # loong64 does above: the container is the toolchain, not the target,
+          # so these run at the runner's own speed.
+          - platform: x64
+            mode: native
+            runs_on: ubuntu-24.04
+            configure_flags: ''
+            timeout_minutes: 240
+          - platform: arm64
+            mode: native
+            runs_on: ubuntu-24.04-arm
+            configure_flags: ''
+            timeout_minutes: 240
+          - platform: ppc64le
+            mode: cross-container
+            image: debian:trixie
+            triple: powerpc64le-linux-gnu
+            apt_packages: gcc-powerpc64le-linux-gnu g++-powerpc64le-linux-gnu
+            configure_flags: >-
+              --dest-cpu=ppc64 --dest-os=linux --cross-compiling
+            timeout_minutes: 300
+          - platform: s390x
+            mode: cross-container
+            image: debian:trixie
+            triple: s390x-linux-gnu
+            apt_packages: gcc-s390x-linux-gnu g++-s390x-linux-gnu
+            configure_flags: >-
+              --dest-cpu=s390x --dest-os=linux --cross-compiling
+            timeout_minutes: 300
+          # riscv64: openssl has no riscv64 asm config either, same story as
+          # loong64 - ask for the no-asm build, which is the only one there is.
+          - platform: riscv64
+            mode: cross-container
+            image: debian:trixie
+            triple: riscv64-linux-gnu
+            apt_packages: gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
+            configure_flags: >-
+              --dest-cpu=riscv64 --dest-os=linux --cross-compiling
+              --openssl-no-asm
+            timeout_minutes: 300
+          # 64-bit Windows. On nodejs.org, and built here for the same reason as
+          # the rest: WeKan's win64 bundle should carry the same Node.js as
+          # every other bundle.
+          - platform: win64
+            mode: windows
+            runs_on: windows-2022
+            vcbuild_arch: x64
+            timeout_minutes: 240
+          # macOS. Both are on nodejs.org; built here so the mac-arm64 bundle is
+          # not the one platform taking its Node.js from somewhere else.
+          - platform: mac-x64
+            mode: mac
+            runs_on: macos-13
+            timeout_minutes: 240
+          - platform: mac-arm64
+            mode: mac
+            runs_on: macos-14
+            timeout_minutes: 240
           # 32-bit Windows. nodejs.org stopped publishing it and upstream removed
           # the build itself in 7ad0cc3e571 ("build: remove support for 32-bit
           # Windows"); this fork puts the removed pieces back - see the commit
@@ -229,6 +328,7 @@ jobs:
           - platform: win32
             mode: windows
             runs_on: windows-2022
+            vcbuild_arch: x86
     steps:
       - uses: actions/checkout@v4
 
@@ -325,12 +425,35 @@ jobs:
         shell: cmd
         run: choco install nasm -y --no-progress
 
-      - name: Build (32-bit Windows)
+      - name: Build (Windows)
         if: matrix.mode == 'windows'
         shell: cmd
         run: |
-          call vcbuild.bat x86 clang-cl release
+          call vcbuild.bat ${{ matrix.vcbuild_arch }} clang-cl release
           if errorlevel 1 exit /b 1
+
+      # x64 and arm64 on Linux, and both macOS builds, run on a runner that IS
+      # the target CPU, so there is no container, no toolchain to install and no
+      # cross flags - just configure and make, which is also the configuration
+      # upstream builds these on.
+      - name: Build (natively, on a runner of this CPU)
+        if: matrix.mode == 'native' || matrix.mode == 'mac'
+        run: |
+          set -euo pipefail
+          if [ '${{ matrix.mode }}' = 'native' ]; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              build-essential python3 ninja-build ca-certificates
+            JOBS="$(nproc)"
+          else
+            # The macOS runners have Xcode and python3 already; ninja is the one
+            # thing worth adding, and it is what upstream uses too.
+            brew install ninja || true
+            JOBS="$(sysctl -n hw.ncpu)"
+          fi
+          ./configure ${{ matrix.configure_flags }}
+          make -j"$JOBS"
+          strip out/Release/node 2>/dev/null || true
 
       - name: Name it for the release, and say what it is
         if: matrix.mode != 'windows'
@@ -421,11 +544,11 @@ jobs:
           # can say so.
           present="$( (ls dist 2>/dev/null || true) | sed -n 's#^node-\(.*\)#\1#p' | sed 's#\.exe$##' | sort -u)"
           plats=""
-          for a in i386 armhf armv7 loong64 win32; do
+          for a in x64 arm64 i386 armhf armv7 ppc64le s390x riscv64 loong64 win64 win32 mac-x64 mac-arm64; do
             printf '%s\n' "$present" | grep -qx "$a" && plats="${plats:+$plats }$a"
           done
           for a in $present; do
-            printf ' %s ' "i386 armhf armv7 loong64 win32" | grep -q " $a " || plats="${plats:+$plats }$a"
+            printf ' %s ' "x64 arm64 i386 armhf armv7 ppc64le s390x riscv64 loong64 win64 win32 mac-x64 mac-arm64" | grep -q " $a " || plats="${plats:+$plats }$a"
           done
           if [ -z "$plats" ]; then
             echo "::error::No platform produced a binary - every build job failed. Their logs say why; nothing is published."
