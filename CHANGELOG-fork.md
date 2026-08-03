@@ -64,6 +64,30 @@ compiles.
 Newest first.
 
 <details>
+<summary><a href="https://github.com/wekan/node/commit/CHECKSUMHASH">A checksum file beside every binary</a>. Thanks to xet7.</summary>
+
+nodejs.org publishes a `SHASUMS256.txt` for its releases and signs it; this fork
+published nothing. So WeKan's build could verify a download from nodejs.org and
+could not verify one from here, which meant the fork was the least trustworthy
+of the three sources for a reason that was entirely fixable.
+
+Every binary now gets a `node-<platform>.sha256sum` beside it on the release,
+in the same `<sum>  <file>` format nodejs.org uses, so `sha256sum -c` works on
+it directly and WeKan's build reads it the same way it reads the other two.
+
+One file per binary rather than one file for the release, because that is the
+shape the rest of these releases already have: a consumer downloads only the
+platform it needs, and should not have to fetch a list covering twelve others to
+check it.
+
+This does not make the fork's binaries signed - that needs a key, which is a
+decision and a secret rather than something a workflow can invent. It makes them
+checkable, which is what catches the truncated download that is the realistic
+failure.
+
+</details>
+
+<details>
 <summary><a href="https://github.com/wekan/node/commit/0e319e128f440881d698f7cfbcc815f0c182fb48">Every platform is built here now, not only the ones nobody else builds</a>. Thanks to xet7.</summary>
 
 The fork started as "the CPUs nobody publishes a Node.js for". That is no

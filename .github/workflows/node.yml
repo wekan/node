@@ -468,6 +468,13 @@ jobs:
           # an ARM one.
           file "dist/node-${{ matrix.platform }}"
           ls -l "dist/node-${{ matrix.platform }}"
+          # A checksum beside the binary, so a consumer can tell a truncated or
+          # tampered download from a good one. nodejs.org publishes a
+          # SHASUMS256.txt and this fork published nothing, which is why WeKan's
+          # build could verify an official download and not this one.
+          ( cd dist && sha256sum "node-${{ matrix.platform }}" \
+              > "node-${{ matrix.platform }}.sha256sum" )
+          cat "dist/node-${{ matrix.platform }}.sha256sum"
 
       - name: Name it for the release (Windows)
         if: matrix.mode == 'windows'
@@ -480,6 +487,9 @@ jobs:
           # goes by extension.
           cp Release/node.exe "dist/node-${{ matrix.platform }}.exe"
           ls -l "dist/node-${{ matrix.platform }}.exe"
+          ( cd dist && sha256sum "node-${{ matrix.platform }}.exe" \
+              > "node-${{ matrix.platform }}.sha256sum" )
+          cat "dist/node-${{ matrix.platform }}.sha256sum"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -542,7 +552,10 @@ jobs:
           # with a bare "Process completed with exit code 2" and no word about
           # what was actually wrong. The empty case is handled below, where it
           # can say so.
-          present="$( (ls dist 2>/dev/null || true) | sed -n 's#^node-\(.*\)#\1#p' | sed 's#\.exe$##' | sort -u)"
+          # grep -v the checksum files: dist/ now holds node-i386 AND
+          # node-i386.sha256sum, and only the first is a platform.
+          present="$( (ls dist 2>/dev/null || true) | grep -v '\.sha256sum$' \
+            | sed -n 's#^node-\(.*\)#\1#p' | sed 's#\.exe$##' | sort -u)"
           plats=""
           for a in x64 arm64 i386 armhf armv7 ppc64le s390x riscv64 loong64 win64 win32 mac-x64 mac-arm64; do
             printf '%s\n' "$present" | grep -qx "$a" && plats="${plats:+$plats }$a"
