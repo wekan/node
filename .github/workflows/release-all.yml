@@ -128,11 +128,6 @@ jobs:
   # then a single red job with its own log, not "the build failed".
   build:
     name: build ${{ matrix.platform }}
-    # Empty `platforms` means all of them, which is what a plain run of this
-    # workflow passes. release-all-missing.yml passes the subset a release does
-    # not already carry, so the matrix stays the ONE list of thirteen platforms
-    # and only the selection changes.
-    if: ${{ inputs.platforms == '' || contains(fromJSON(inputs.platforms), matrix.platform) }}
     # Linux platforms cross compile (or build in a container) on the Linux
     # runner; win32 needs a Windows one with MSVC, so the runner comes from the
     # matrix rather than being fixed.
@@ -358,8 +353,20 @@ jobs:
             mode: windows
             runs_on: windows-2022
             vcbuild_arch: x86
+    # WHICH entries this run wants, decided here because it cannot be decided
+    # where it belongs. A job-level `if:` cannot see `matrix` - GitHub exposes
+    # that context to runs-on, env, name, steps and a few others, but not to a
+    # job's own condition - and a workflow that tries answers
+    #   Unrecognized named-value: 'matrix'
+    # and refuses to load at all, taking every workflow that CALLS it with it.
+    # A job-level env CAN see matrix, so the answer is computed once here and
+    # every step below asks for it.
+    env:
+      BUILD_THIS: ${{ inputs.platforms == '' || contains(fromJSON(inputs.platforms), matrix.platform) }}
+
     steps:
       - uses: actions/checkout@v4
+        if: ${{ env.BUILD_THIS == 'true' }}
 
       # There is no QEMU step any more, and there is nothing left to register
       # it for: i386 and the i386 cross containers run natively on an x86_64
@@ -367,7 +374,7 @@ jobs:
       # job here builds on the CPU it is running on.
 
       - name: Build (in a container of the target architecture)
-        if: matrix.mode == 'container'
+        if: ${{ env.BUILD_THIS == 'true' && (matrix.mode == 'container') }}
         run: |
           set -euo pipefail
           # The build tools INSIDE the target's own image, so the compiler, the
@@ -392,7 +399,7 @@ jobs:
             '
 
       - name: Build (cross compile, in a container that has the toolchain)
-        if: matrix.mode == 'cross-container'
+        if: ${{ env.BUILD_THIS == 'true' && (matrix.mode == 'cross-container') }}
         run: |
           set -euo pipefail
           # The container supplies the CROSS COMPILER, not the CPU: this runs on
@@ -449,13 +456,13 @@ jobs:
       # automatic (configure.py sets openssl_no_asm when nasm is missing): if
       # the install flakes, the build is slower, not broken.
       - name: Install NASM, so openssl keeps its assembly
-        if: matrix.mode == 'windows'
+        if: ${{ env.BUILD_THIS == 'true' && (matrix.mode == 'windows') }}
         continue-on-error: true
         shell: cmd
         run: choco install nasm -y --no-progress
 
       - name: Build (Windows)
-        if: matrix.mode == 'windows'
+        if: ${{ env.BUILD_THIS == 'true' && (matrix.mode == 'windows') }}
         shell: cmd
         run: |
           call vcbuild.bat ${{ matrix.vcbuild_arch }} clang-cl release
@@ -466,7 +473,7 @@ jobs:
       # cross flags - just configure and make, which is also the configuration
       # upstream builds these on.
       - name: Build (natively, on a runner of this CPU)
-        if: matrix.mode == 'native' || matrix.mode == 'mac'
+        if: ${{ env.BUILD_THIS == 'true' && (matrix.mode == 'native' || matrix.mode == 'mac') }}
         run: |
           set -euo pipefail
           if [ '${{ matrix.mode }}' = 'native' ]; then
@@ -485,7 +492,7 @@ jobs:
           strip out/Release/node 2>/dev/null || true
 
       - name: Name it for the release, and say what it is
-        if: matrix.mode != 'windows'
+        if: ${{ env.BUILD_THIS == 'true' && (matrix.mode != 'windows') }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -506,7 +513,7 @@ jobs:
           cat "dist/node-${{ matrix.platform }}.sha256sum"
 
       - name: Name it for the release (Windows)
-        if: matrix.mode == 'windows'
+        if: ${{ env.BUILD_THIS == 'true' && (matrix.mode == 'windows') }}
         shell: bash
         run: |
           set -euo pipefail
@@ -521,6 +528,7 @@ jobs:
           cat "dist/node-${{ matrix.platform }}.sha256sum"
 
       - uses: actions/upload-artifact@v4
+        if: ${{ env.BUILD_THIS == 'true' }}
         with:
           name: node-${{ matrix.platform }}
           path: dist/node-${{ matrix.platform }}*
