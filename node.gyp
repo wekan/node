@@ -548,14 +548,10 @@
         'libraries': ['-latomic'],
       }],
     ],
-    # Relevant only for x86, restored with 32-bit Windows (removed upstream in
-    # 7ad0cc3e571). Refs: https://github.com/nodejs/node/pull/25852 and
-    # https://docs.microsoft.com/en-us/cpp/build/reference/safeseh-image-has-safe-exception-handlers
-    'msvs_settings': {
-      'VCLinkerTool': {
-        'ImageHasSafeExceptionHandlers': 'false',
-      },
-    },
+    # The x86 /SAFESEH:NO opt-out that used to sit here - restored with 32-bit
+    # Windows, removed upstream in 7ad0cc3e571 - moved to common.gypi, where it
+    # reaches V8's and ICU's targets as well as node's own. See the comment
+    # there for what it is for and why it has to be global.
   },
 
   'targets': [

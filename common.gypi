@@ -402,6 +402,32 @@
         'conditions': [
           ['target_arch=="ia32"', {
             'TargetMachine' : 1,              # /MACHINE:X86
+            # /SAFESEH:NO, and it has to be HERE rather than in node.gyp.
+            #
+            # gyp turns /SAFESEH on by ITSELF for every x86 link -
+            # tools/gyp/pylib/gyp/msvs_emulation.py sets
+            # safeseh_default = "true" when the arch is x86 - so opting out is
+            # not a preference, it is the only way to link an object that
+            # carries no safe-exception-handler table. ICU's genccode writes
+            # exactly such an object: icudt<ver>l_dat.obj is generated data
+            # with no code and no SEH table in it, and the sixth workflow run
+            # died on it - "lld-link : error : /safeseh:
+            # ../obj/global_intermediate/icudt78l_dat.obj is not compatible
+            # with SEH" - while linking gen-regexp-special-case, one of V8's
+            # build tools.
+            #
+            # node.gyp already carried this setting, restored with 32-bit
+            # Windows, but a target_defaults in node.gyp reaches only the
+            # targets node.gyp DEFINES. The object is linked by targets in
+            # tools/v8_gypfiles/v8.gyp and tools/icu/icu-generic.gyp, which
+            # never saw it. common.gypi is included into every .gyp in the tree
+            # (tools/gyp_node.py passes it with -I), so one rule here covers
+            # node, V8 and ICU alike - and it is scoped to ia32, which is the
+            # only architecture /SAFESEH means anything on.
+            #
+            # Refs: https://github.com/nodejs/node/pull/25852 and
+            # https://docs.microsoft.com/en-us/cpp/build/reference/safeseh-image-has-safe-exception-handlers
+            'ImageHasSafeExceptionHandlers': 'false',
           }],
           ['target_arch=="x64"', {
             'TargetMachine' : 17,             # /MACHINE:X64
