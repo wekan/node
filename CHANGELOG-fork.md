@@ -64,6 +64,68 @@ compiles.
 Newest first.
 
 <details>
+<summary><a href="https://github.com/wekan/node/commit/8c4de123a1cabe66e08fa022251c07e6cbee31b7">A job-level `if:` cannot see `matrix`, and a workflow that tries does not load</a>. Thanks to xet7.</summary>
+
+The `platforms` filter added with the workflow below was written as a job-level
+condition:
+
+    if: ${{ inputs.platforms == '' || contains(fromJSON(inputs.platforms), matrix.platform) }}
+
+GitHub refuses to load a workflow that does that:
+
+    Invalid workflow file
+    (Line: 135, Col: 9): Unrecognized named-value: 'matrix'
+
+`matrix` is available to a job's `runs-on`, `env`, `name`, `container`,
+`services`, `continue-on-error`, `timeout-minutes`, `strategy` and `steps` — but
+not to `jobs.<id>.if`, which is evaluated before the matrix is expanded. It
+looks entirely reasonable, which is why it was written the same way in several
+repositories at once.
+
+It is worse than a job that does not run: a workflow that will not load takes
+every workflow that CALLS it down with it, so `release-all-missing.yml` failed
+at startup and built nothing.
+
+The decision moves to the job's `env:`, which can see matrix, and every step
+asks `if: ${{ env.BUILD_THIS == 'true' }}`. The seven steps that already had a
+condition keep it, ANDed inside parentheses — `matrix.mode == 'windows'`,
+`matrix.mode == 'cross-container'` and the rest are unchanged.
+
+</details>
+
+<details>
+<summary><a href="https://github.com/wekan/node/commit/0b724bd7602a2d28526d12eff05645c4481db0e5">Only the platforms a release is missing can be built, and the full build is release-all.yml</a>. Thanks to xet7.</summary>
+
+Thirteen platforms, and several of them take hours: armhf and armv7 are cross
+builds that compile V8 twice and have been killed at the 360-minute mark,
+loong64 takes about 150 minutes and i386 about 115. When one platform failed, or
+was added, or a run was cancelled, the only way to get that one binary was to
+run the whole thing again and rebuild all thirteen.
+
+`release-all-missing.yml` works out which platforms the release is short of and
+builds those. It carries no second copy of the build: `node.yml` is renamed
+`release-all.yml` and gained a `workflow_call` trigger and a `platforms` filter,
+so the missing-only workflow calls it with the subset it wants and the thirteen
+platforms' compile flags stay in one place. That matters more here than
+anywhere: a duplicated matrix would drift, and a binary added to a release
+months later would then differ from the ones beside it.
+
+A platform counts as present only when BOTH `node-<platform>[.exe]` and its
+`.sha256sum` are on the release, so a binary whose checksum upload failed is
+rebuilt rather than left half published. "Nothing is missing" is a notice and a
+summary line, not a failure.
+
+The selection was checked against three seeded releases: a complete one gives
+`[]`; one missing armhf, with win32's checksum absent and no mac-x64 at all,
+gives exactly `["armhf","win32","mac-x64"]`; and no release at all gives all
+thirteen. The `.exe` naming of win64/win32 is part of that check.
+
+The name change is so this repository calls its release workflows what the
+other WeKan repositories call theirs.
+
+</details>
+
+<details>
 <summary><a href="https://github.com/wekan/node/commit/e52958d30f884a1c8d7d1c15f267117228f64d27">A checksum file beside every binary</a>. Thanks to xet7.</summary>
 
 nodejs.org publishes a `SHASUMS256.txt` for its releases and signs it; this fork
