@@ -47,6 +47,32 @@ compiles.
 Newest first.
 
 <details>
+<summary><a href="https://github.com/wekan/node/commit/0767aa19aefb72c0fe24b1638a4ed341b37fa3d9">Each platform gets the build timeout its build actually needs</a>. Thanks to xet7.</summary>
+
+`armhf` and `armv7` were both cancelled at exactly three hours, mid-compile,
+with nothing wrong with them: `timeout-minutes` was a flat 180, set as a
+*prediction* before any ARM build had ever run to completion.
+
+The prediction missed that a **cross build compiles V8 twice** — once for the
+host, to get `mksnapshot`, and once for the target — and that for ARM the host
+half is itself 32-bit, because V8 refuses anything else: *"Target architecture
+arm is only supported on arm and ia32 host"* (`deps/v8/include/v8config.h`). An
+hour of armhf's three went on `obj.host/` before a single ARM object was built.
+
+Measured from the sixth run: win32 22 min, i386 115 (native container — the
+only Linux job that is *not* a cross build, so it has no host toolset to build),
+loong64 148 (cross, but its host half is native amd64), armhf and armv7 killed
+at 180 with ~85% and ~88% of their target compiles done.
+
+The timeout comes from the matrix now, keeping the rule the flat number was
+reaching for — roughly twice a good build, so a hang is stopped rather than left
+to burn the runner's whole allowance. i386 240, loong64 300, armhf and armv7
+360. ARM gets 360 rather than twice its build because 360 is the ceiling: a job
+on a GitHub-hosted runner is killed at six hours whatever this file says.
+
+</details>
+
+<details>
 <summary><a href="https://github.com/wekan/node/commit/9a057a4284edad38fbd442cd337283400690362a">Fix what the sixth workflow run found: x86 links opt out of /SAFESEH everywhere, not only in node.gyp</a>. Thanks to xet7.</summary>
 
 The ICU data object the fifth run taught `genccode` to write correctly is now
