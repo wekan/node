@@ -253,6 +253,20 @@ jobs:
           # have to run here, so they are built with the container's native
           # compiler while everything shipped is built with the cross one.
           #
+          # LINK_host and AR_host have to be named too, and the reason is a
+          # fallback rather than a default. gyp's make generator resolves each
+          # host tool as GetEnvironFallback(("<TOOL>_host", "<TOOL>"), default)
+          # (tools/gyp/pylib/gyp/generator/make.py), so an unset LINK_host does
+          # NOT fall back to $(CXX.host) - it falls back to LINK, which is set
+          # just above to the CROSS linker. The host compiles then happen with
+          # g++ and the host LINK with the cross compiler, which is what the
+          # fifth run died of: node_js2c is a host tool built from obj.host
+          # objects, and linking it ran "arm-linux-gnueabihf-g++ ... -m32" -
+          # the host's own 32-bit flag handed to a compiler that has never
+          # heard of it ("unrecognized command-line option '-m32'; did you mean
+          # '-mbe32'?", and '-m64' in the loong64 container). AR_host had the
+          # same fallback and was archiving host objects with the cross ar.
+          #
           # --platform is what picks WHICH host: loong64 cross compiles from the
           # runner's own x86_64, but ARM32 has to be cross compiled from a
           # 32-bit x86 host (v8config.h - see the matrix), so its container is
@@ -265,7 +279,7 @@ jobs:
             -e AR="${{ matrix.triple }}-ar" \
             -e RANLIB="${{ matrix.triple }}-ranlib" \
             -e LINK="${{ matrix.triple }}-g++" \
-            -e CC_host=gcc -e CXX_host=g++ \
+            -e CC_host=gcc -e CXX_host=g++ -e LINK_host=g++ -e AR_host=ar \
             ${{ matrix.image }} \
             sh -c '
               set -eu
