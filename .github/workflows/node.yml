@@ -80,16 +80,32 @@ jobs:
   # then a single red job with its own log, not "the build failed".
   build:
     name: build ${{ matrix.platform }}
-    # 180. Nothing here is emulated any more - see armhf below - so every job
-    # compiles at the runner's own speed, and the ARM ones no longer need the
-    # 350 minutes they used to be killed at. A limit that is roughly twice a
-    # good build is the useful kind: a build that hangs is stopped in a couple
-    # of hours instead of burning six.
     # Linux platforms cross compile (or build in a container) on the Linux
     # runner; win32 needs a Windows one with MSVC, so the runner comes from the
     # matrix rather than being fixed.
     runs-on: ${{ matrix.runs_on || 'ubuntu-latest' }}
-    timeout-minutes: 180
+    # The rule is still "roughly twice a good build" - a hang should be stopped,
+    # not left to burn the runner's whole allowance - but the number is per
+    # platform now, and MEASURED rather than predicted. A flat 180 was set when
+    # no build had yet run far enough to time, on the reasoning that nothing is
+    # emulated any more so every job compiles at the runner's own speed. Half of
+    # that held: nothing is emulated. What it missed is that a CROSS build
+    # compiles V8 TWICE - once for the host, to get mksnapshot, and once for the
+    # target - and for ARM the host half is itself 32-bit.
+    #
+    # The sixth run measured all four: win32 22 min, i386 115, loong64 148, and
+    # armhf/armv7 killed at 180 with the target compiles ~85% done, an hour of
+    # which had gone on the host half alone. i386 is the fast one because it is
+    # the only Linux job that is NOT a cross build - a native i386 container has
+    # no host toolset to build.
+    #
+    # ARM gets 360 rather than twice its build, because 360 is the ceiling: a
+    # job on a GitHub-hosted runner is killed at six hours whatever this says.
+    # It cannot be avoided by cross compiling from a 64-bit host either - V8
+    # refuses, "Target architecture arm is only supported on arm and ia32 host"
+    # (deps/v8/include/v8config.h), so the ia32 host container is forced and its
+    # slow host half with it.
+    timeout-minutes: ${{ matrix.timeout_minutes || 180 }}
     strategy:
       fail-fast: false
       matrix:
@@ -116,6 +132,7 @@ jobs:
             # linux-x86, so they rotted. The C implementations are slower at
             # crypto and they compile.
             configure_flags: --dest-cpu=x86 --dest-os=linux --openssl-no-asm
+            timeout_minutes: 240        # measured 115: native container, no host toolset
           # 32-bit ARM CROSS COMPILES, from a 32-bit x86 host. V8 states the
           # rule itself, in deps/v8/include/v8config.h:
           #
@@ -159,6 +176,7 @@ jobs:
             configure_flags: >-
               --dest-cpu=arm --dest-os=linux --cross-compiling
               --with-arm-float-abi=hard --with-arm-fpu=vfpv3-d16
+            timeout_minutes: 360        # measured >180, ~85% of the target compiles done; 360 is the runner ceiling
           - platform: armv7
             mode: cross-container
             image: i386/debian:bookworm
@@ -168,6 +186,7 @@ jobs:
             configure_flags: >-
               --dest-cpu=arm --dest-os=linux --cross-compiling
               --with-arm-float-abi=hard --with-arm-fpu=neon
+            timeout_minutes: 360        # measured >180, ~88% of the target compiles done; 360 is the runner ceiling
           # LoongArch64. Node has supported it since configure.py learned
           # `loong64` and V8 carries a full port (deps/v8/src/codegen/loong64),
           # but neither nodejs.org nor unofficial-builds publishes a binary - so
@@ -196,6 +215,7 @@ jobs:
             configure_flags: >-
               --dest-cpu=loong64 --dest-os=linux --cross-compiling
               --openssl-no-asm
+            timeout_minutes: 300        # measured 148: cross build, but its host half is native amd64
           # 32-bit Windows. nodejs.org stopped publishing it and upstream removed
           # the build itself in 7ad0cc3e571 ("build: remove support for 32-bit
           # Windows"); this fork puts the removed pieces back - see the commit
