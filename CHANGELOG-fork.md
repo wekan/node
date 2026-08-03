@@ -47,6 +47,36 @@ compiles.
 Newest first.
 
 <details>
+<summary><a href="https://github.com/wekan/node/commit/9a057a4284edad38fbd442cd337283400690362a">Fix what the sixth workflow run found: x86 links opt out of /SAFESEH everywhere, not only in node.gyp</a>. Thanks to xet7.</summary>
+
+The ICU data object the fifth run taught `genccode` to write correctly is now
+written correctly — and the linker refuses it:
+
+```
+lld-link : error : /safeseh: ../obj/global_intermediate/icudt78l_dat.obj
+is not compatible with SEH [tools\v8_gypfiles\gen-regexp-special-case.vcxproj]
+```
+
+`icudt78l_dat.obj` is generated **data**. It holds no code, so it carries no
+safe-exception-handler table, and nothing can give it one. Opting out of
+`/SAFESEH` is the only way to link it — which is why node.gyp already carried
+`ImageHasSafeExceptionHandlers: 'false'`, restored with 32-bit Windows.
+
+The opt-out was in the wrong place. A `target_defaults` in `node.gyp` reaches
+only the targets **node.gyp defines**, and this object is linked by targets in
+`tools/v8_gypfiles/v8.gyp` and `tools/icu/icu-generic.gyp`, which never saw it.
+Nothing had to opt those in before, because gyp turns `/SAFESEH` on by itself
+for every x86 link — `msvs_emulation.py` sets `safeseh_default = "true"` when
+the arch is x86 — and upstream stopped building the one architecture where that
+default means anything.
+
+It sits in `common.gypi` now, scoped to `ia32`. `tools/gyp_node.py` passes that
+file to gyp with `-I`, and gyp hands its includes down to every dependency
+build file it loads, so one rule covers node, V8 and ICU alike.
+
+</details>
+
+<details>
 <summary><a href="https://github.com/wekan/node/commit/61e9c936c5556a50ec10a3ac570a5e2862f7b728">Fix what the fifth workflow run found: the host linker, a V8 template, and ICU's name for ia32</a>. Thanks to xet7.</summary>
 
 Five builds, five failures, three causes.
