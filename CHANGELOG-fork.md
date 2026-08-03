@@ -64,7 +64,7 @@ compiles.
 Newest first.
 
 <details>
-<summary><a href="https://github.com/wekan/node/commit/CHECKSUMHASH">A checksum file beside every binary</a>. Thanks to xet7.</summary>
+<summary><a href="https://github.com/wekan/node/commit/e52958d30f884a1c8d7d1c15f267117228f64d27">A checksum file beside every binary</a>. Thanks to xet7.</summary>
 
 nodejs.org publishes a `SHASUMS256.txt` for its releases and signs it; this fork
 published nothing. So WeKan's build could verify a download from nodejs.org and
