@@ -42,8 +42,8 @@ downloads only the file it needs.
 | `node-loong64` | LoongArch64 Linux | cross, in a `debian:trixie` container |
 | `node-win64.exe` | 64-bit Windows | native on a Windows runner, ClangCL |
 | `node-win32.exe` | 32-bit Windows | native on a Windows runner, ClangCL |
-| `node-mac-x64` | macOS Intel | native, on a macos-13 runner |
-| `node-mac-arm64` | macOS Apple silicon | native, on a macos-14 runner |
+| `node-mac-x64` | macOS Intel | cross, on an arm64 macos-15 runner (Xcode 16) |
+| `node-mac-arm64` | macOS Apple silicon | native, on a macos-15 runner (Xcode 16) |
 
 `armhf` and `armv7` are both 32-bit hard-float ARM; the difference is the FPU
 baseline, which is the difference that matters on the boards this exists for.
@@ -63,6 +63,27 @@ no longer exercises, not a change to what Node.js does.
 ## Changes
 
 Newest first.
+
+<details>
+<summary><a href="https://github.com/wekan/node/commit/900ec746ea87257159d9334f8b6d4a60b38d7b6d">The macOS builds move to Xcode 16 (macos-15), because Node 24's V8 needs C++20 aggregate init</a>. Thanks to xet7.</summary>
+
+The mac-arm64 build failed compiling V8:
+`deps/v8/src/wasm/value-type.h:701: error: no matching conversion for
+functional-style cast from 'unsigned int' to 'TypeIndex'`. That is C++20
+parenthesized aggregate initialization (P0960) - `TypeIndex(uint)` on an
+aggregate - which macos-14's default Apple Clang (Xcode 15) does not support and
+Xcode 16 does; it is the same feature that broke `crypto_kmac.cc`. Node 24
+requires Xcode >= 16.1 on macOS (BUILDING.md).
+
+`mac-arm64` now runs on **macos-15**, which ships Xcode 16 by default. `mac-x64`
+cannot use a newer Intel runner - Xcode 16 needs macOS 14+, and every macos-14/15
+GitHub runner is Apple silicon - so it **cross-compiles** x64 on an arm64 macos-15
+runner (`--dest-cpu=x64 --cross-compiling`, universal SDK), guarded by the
+existing `file` arch check. Node's own deployment target keeps both binaries
+compatible with older macOS. The mac-x64 cross-compile still needs confirming on
+CI.
+
+</details>
 
 <details>
 <summary><a href="https://github.com/wekan/node/commit/11687784ddc3ce424bcbb81862f57262974decb4">Release all missing built nothing: it deadlocked on the concurrency group it shared with the workflow it calls</a>. Thanks to xet7.</summary>
