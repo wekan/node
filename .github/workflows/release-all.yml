@@ -331,13 +331,33 @@ jobs:
             timeout_minutes: 240
           # macOS. Both are on nodejs.org; built here so the mac-arm64 bundle is
           # not the one platform taking its Node.js from somewhere else.
+          # macOS Intel. Node 24 needs Xcode 16 (see the mac-arm64 note below),
+          # but GitHub has NO Intel runner that offers it - Xcode 16 requires
+          # macOS 14+, and every macos-14/15 runner is Apple silicon. So the same
+          # P0960 build error that hit mac-arm64 would hit macos-13's Xcode 15
+          # here. Build x64 by CROSS-COMPILING on an arm64 macos-15 runner (Xcode
+          # 16, a universal SDK): --dest-cpu=x64 makes clang emit x86_64, and
+          # --cross-compiling handles the snapshot the way the Linux cross builds
+          # do. The "say what it is" step's `file` check catches a dropped arch
+          # flag (an accidentally-arm64 binary). NOTE: not run on a mac here -
+          # confirm on CI; if the snapshot step misbehaves the flags may need
+          # adjusting.
           - platform: mac-x64
             mode: mac
-            runs_on: macos-13
+            runs_on: macos-15
+            configure_flags: --dest-cpu=x64 --cross-compiling
             timeout_minutes: 240
+          # macos-15 (Sequoia) ships Xcode 16 by default; macos-14's default is
+          # Xcode 15, whose Apple Clang lacks C++20 parenthesized aggregate
+          # initialization (P0960). Node 24's V8 uses it (e.g.
+          # deps/v8/src/wasm/value-type.h: `TypeIndex(uint)`), so on macos-14 the
+          # build died with "no matching conversion ... from 'unsigned int' to
+          # 'TypeIndex'" - the same feature that broke crypto_kmac.cc. Node 24
+          # requires Xcode >= 16.1 on macOS (see BUILDING.md); its own deployment
+          # target keeps the binary compatible with older macOS.
           - platform: mac-arm64
             mode: mac
-            runs_on: macos-14
+            runs_on: macos-15
             timeout_minutes: 240
           # 32-bit Windows. nodejs.org stopped publishing it and upstream removed
           # the build itself in 7ad0cc3e571 ("build: remove support for 32-bit
