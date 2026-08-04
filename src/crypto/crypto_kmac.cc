@@ -245,14 +245,21 @@ bool KmacTraits::DeriveBits(Environment* env,
   params_array[params_count] = OSSL_PARAM_construct_end();
 
   // Initialize the MAC context.
-  if (!mac_ctx.init(ncrypto::Buffer<const void>(key_data, key_size),
-                    params_array)) {
+  // Brace (aggregate) initialization, not parentheses: ncrypto::Buffer is an
+  // aggregate { T* data; size_t len; }, and Buffer<const void>(ptr, len) is
+  // C++20 parenthesized aggregate initialization (P0960), which GCC and modern
+  // Clang accept but the macOS runner's Apple Clang does not, so the mac builds
+  // failed with "no matching constructor for 'ncrypto::Buffer<const void>'".
+  // Match the portable brace style crypto_hash.cc already uses.
+  if (!mac_ctx.init(
+          ncrypto::Buffer<const void>{.data = key_data, .len = key_size},
+          params_array)) {
     return false;
   }
 
   // Update with data.
-  if (!mac_ctx.update(ncrypto::Buffer<const void>(params.data.data(),
-                                                  params.data.size()))) {
+  if (!mac_ctx.update(ncrypto::Buffer<const void>{.data = params.data.data(),
+                                                  .len = params.data.size()})) {
     return false;
   }
 

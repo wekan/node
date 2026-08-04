@@ -1959,8 +1959,14 @@ class Instruction {
   template <typename T>
   inline void SetInstructionBits(
       T value, WritableJitAllocation* jit_allocation = nullptr) const {
-    Instruction::SetInstructionBits<T>(reinterpret_cast<const uint8_t*>(this),
-                                       value, jit_allocation);
+    // The static SetInstructionBits writes through its pointer, so it takes a
+    // non-const uint8_t*; this const accessor patches instructions in place the
+    // way V8 does elsewhere, so strip the const rather than pass a const
+    // uint8_t* the static overload cannot bind (which failed to compile the
+    // s390 simulator: "invalid conversion from const uint8_t* to uint8_t*").
+    Instruction::SetInstructionBits<T>(
+        const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(this)),
+        value, jit_allocation);
   }
   V8_EXPORT_PRIVATE void SetInstructionBits(
       Instr value, WritableJitAllocation* jit_allocation = nullptr);

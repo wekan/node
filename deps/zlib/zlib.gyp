@@ -303,6 +303,25 @@
                 # to be told it may use it; on arm64 NEON is the baseline.
                 ['target_arch=="arm"', {
                   'cflags': [ '-mfpu=neon' ],
+                  # ADLER32_SIMD_NEON (propagated by zlib_adler32_simd, which
+                  # 32-bit ARM+NEON depends on above) makes adler32.c call
+                  # cpu_check_features(). cpu_features.c only compiles that
+                  # function when an ARMV8_OS_* macro names the platform, and on
+                  # arm64 that macro arrives with the ARMv8-only zlib_arm_crc32
+                  # dependency - which a 32-bit ARM target deliberately does NOT
+                  # take. Set it directly here, or openssl-cli fails to link with
+                  # "adler32.c: undefined reference to cpu_check_features".
+                  'conditions': [
+                    ['OS=="android"', {
+                      'defines': [ 'ARMV8_OS_ANDROID' ],
+                    }],
+                    ['OS=="linux" or OS=="openharmony"', {
+                      'defines': [ 'ARMV8_OS_LINUX' ],
+                    }],
+                    ['OS=="mac"', {
+                      'defines': [ 'ARMV8_OS_MACOS' ],
+                    }],
+                  ],
                 }],
               ],
             }],
