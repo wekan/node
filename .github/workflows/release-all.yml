@@ -680,11 +680,11 @@ jobs:
             echo "::error::No binaries were built - nothing to publish."
             exit 1
           fi
-          # --clobber is half of what makes a re-run replace the last one: an
-          # asset of the same name is overwritten in place rather than the
-          # upload failing on it, so a fixed build can be published to the
-          # release the broken one is attached to. The sweep below is the other
-          # half - it removes the platforms this run did NOT build.
+          # --clobber lets a re-run replace an asset of the same name in place
+          # rather than failing the upload on it, so a fixed build of a platform
+          # is published over the broken one on the release it is attached to.
+          # Assets this run did NOT build are LEFT ALONE (see the note below the
+          # upload) - the release ACCUMULATES every platform of this version.
           # --target pins a NEW tag to the commit that was built rather than to
           # whatever the default branch has moved to since.
           if gh release view "$V" >/dev/null 2>&1; then
@@ -697,35 +697,18 @@ jobs:
               --notes-file "$NOTES_FILE"
           fi
 
-          # Then take away everything this run did not produce, so the release
-          # carries exactly ONE run's binaries.
+          # The release ACCUMULATES: assets from earlier runs that this run did
+          # not rebuild are LEFT IN PLACE, so every platform's binary for this
+          # version collects on one release across however many runs it takes to
+          # build them all. This is the whole point of "release all missing" -
+          # one CPU that fails today must not cost the release the binaries the
+          # others already published, and the ones that DID build here overwrite
+          # their old copies via --clobber above.
           #
-          # Without this a release accumulates: a platform that built in March
-          # and has failed ever since keeps its March binary sitting beside
-          # today's, indistinguishable from them, and "which run is this from"
-          # becomes a question you cannot answer from the release page. Fixing a
-          # build then means comparing against a binary whose provenance nobody
-          # knows, which is the opposite of debugging.
-          #
-          # AFTER the upload, never before: if an upload fails, the release
-          # keeps what it had rather than being emptied first and then not
-          # refilled.
-          #
-          # Only `node-*` is swept. Anything else attached to the release was
-          # put there by somebody on purpose and is not this workflow's to
-          # remove.
-          mine=""
-          for a in "${assets[@]}"; do
-            mine="$mine $(basename "$a")"
-          done
-          gh release view "$V" --json assets --jq '.assets[].name' \
-            | grep '^node-' \
-            | while read -r name; do
-                if printf ' %s ' "$mine" | grep -q " $name "; then
-                  continue
-                fi
-                echo "Deleting $name: not built by this run."
-                gh release delete-asset "$V" "$name" --yes
-              done
-          echo "The release now carries exactly what this run built:"
+          # (An earlier version SWEPT away every node-* not built by the current
+          # run, to keep a release to a single run's binaries. That deleted the
+          # platforms a partial run did not touch - the opposite of "add the
+          # missing ones" - so it is gone. Each version has its own tag, so
+          # accumulating within a tag only ever gathers builds of that version.)
+          echo "The release now carries these binaries (accumulated across runs):"
           gh release view "$V" --json assets --jq '.assets[].name'
