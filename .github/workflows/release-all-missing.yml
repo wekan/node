@@ -35,10 +35,18 @@ on:
 permissions:
   contents: write
 
-# The same group release-all.yml uses, so a "fill in the gaps" run and a full
-# run cannot upload to one release at the same time.
+# A DISTINCT group from release-all.yml's `node-32bit-*`. This workflow CALLS
+# release-all.yml (the `build` job below, `uses:`), and a reusable workflow that
+# requests a concurrency group already held by its caller deadlocks: GitHub
+# cancels the run with "a deadlock was detected for concurrency group
+# 'node-32bit-<version>' between a top level workflow and 'build what is
+# missing'" - which is why a run only ever reached the "what is missing" list and
+# never built anything. Mutual exclusion with a full run is still enforced where
+# it matters: the actual build+upload happens inside release-all.yml, which keeps
+# its own `node-32bit-*` group, so this workflow's inner call and a direct full
+# run still serialize on it and cannot upload to one release at the same time.
 concurrency:
-  group: node-32bit-${{ inputs.version || github.ref }}
+  group: node-missing-${{ inputs.version || github.ref }}
   cancel-in-progress: false
 
 jobs:
