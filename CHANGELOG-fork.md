@@ -54,14 +54,55 @@ fail is worse than an honest gap; and **FreeBSD**, which needs a FreeBSD host
 and has no runner - FreeBSD builds Node from ports, which is the answer there
 anyway.
 
-**Almost all of this is build configuration.** Two commits touch shipped source
-— the zlib SIMD flags and the V8 template disambiguator below — and both are
-fixes for 32-bit targets that upstream no longer builds and therefore no longer
-compiles.
+**Almost all of this is build configuration.** A handful of commits touch
+shipped source — the zlib SIMD flags and macro, the V8 template disambiguator and
+s390 simulator cast, and one `crypto_kmac.cc` aggregate-init form below — and
+every one is a fix for a target (32-bit ARM, s390x, macOS) whose compiler upstream
+no longer exercises, not a change to what Node.js does.
 
 ## Changes
 
 Newest first.
+
+<details>
+<summary><a href="https://github.com/wekan/node/commit/9d7fbf3249f016063a11e8498880f5819734eb38">Fix the v24.19.0 builds for macOS, s390x and armv7: a C++20 aggregate init, a const cast, and an ARM zlib macro</a>. Thanks to xet7.</summary>
+
+The v24.19.0 "build what is missing" run left six targets unbuilt. Two of them —
+**win64** and **win32** — in fact built and published; they were carried by the
+same run and only looked missing in a later check. The other four were genuine
+compile failures, three distinct ones:
+
+**mac-arm64 and mac-x64** failed in `src/crypto/crypto_kmac.cc`, which
+constructed `ncrypto::Buffer<const void>` with parentheses —
+`Buffer<const void>(key_data, key_size)`. `Buffer` is an aggregate
+(`{ T* data; size_t len; }`), so that is C++20 parenthesized aggregate
+initialization (P0960): GCC and modern Clang accept it, which is why every Linux
+build passed, but the macOS runners' Apple Clang does not, so both mac builds
+failed with `no matching constructor for 'ncrypto::Buffer<const void>'`. Switched
+to brace initialization — `Buffer<const void>{.data = …, .len = …}` — the
+portable form `crypto_hash.cc` right beside it already uses.
+
+**s390x** failed building the V8 s390 *simulator* (a host tool, and the only
+place the templated `Instruction::SetInstructionBits<T>` member wrapper in
+`deps/v8/src/codegen/s390/constants-s390.h` is instantiated). The wrapper handed
+a `const uint8_t*` to the static overload that takes a non-const `uint8_t*`, so
+it failed with `invalid conversion from const uint8_t* to uint8_t*`. The static
+overload writes through the pointer; this `const` accessor patches instructions
+in place the way V8 does elsewhere, so it strips the const rather than passing a
+pointer the overload cannot bind.
+
+**armv7** failed at link, not compile: `openssl-cli` ended with
+`adler32.c: undefined reference to cpu_check_features`. 32-bit ARM+NEON enables
+`ADLER32_SIMD_NEON`, so `adler32.c` calls `cpu_check_features()`, but
+`cpu_features.c` only *defines* that function when an `ARMV8_OS_*` macro names
+the platform — and on arm64 that macro arrives with the ARMv8-only
+`zlib_arm_crc32` dependency, which a 32-bit target deliberately does not take
+(its `-march=armv8-a+aes+crc` is AArch64-only). So `ARMV8_OS_LINUX` is now set on
+the main `zlib` target for 32-bit ARM+NEON directly, independent of that
+dependency. This sits next to the earlier zlib SIMD-flags fix, the same
+"32-bit is not a subset of 64-bit here" shape.
+
+</details>
 
 <details>
 <summary><a href="https://github.com/wekan/node/commit/8c4de123a1cabe66e08fa022251c07e6cbee31b7">A job-level `if:` cannot see `matrix`, and a workflow that tries does not load</a>. Thanks to xet7.</summary>
