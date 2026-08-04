@@ -97,9 +97,18 @@ jobs:
           have=""
           for p in $PLATFORMS; do
             case "$p" in win64|win32) asset="node-${p}.exe" ;; *) asset="node-${p}" ;; esac
+            # The checksum is named after the PLATFORM, not the .exe binary: the
+            # build writes `sha256sum node-win64.exe > node-win64.sha256sum` (see
+            # release-all.yml), so the file is node-<p>.sha256sum, NOT
+            # node-<p>.exe.sha256sum. Checking "${asset}.sha256sum" looked for
+            # node-win64.exe.sha256sum, which never exists, so win64/win32 were
+            # ALWAYS reported missing and rebuilt even when already published.
+            # Non-Windows was unaffected (asset == node-<p>, so the two spellings
+            # coincide).
+            sha="node-${p}.sha256sum"
             # BOTH the binary and its checksum, so a half-published platform is
             # rebuilt rather than left broken.
-            if grep -qxF "$asset" existing.txt && grep -qxF "${asset}.sha256sum" existing.txt; then
+            if grep -qxF "$asset" existing.txt && grep -qxF "$sha" existing.txt; then
               have="$have $p"
             else
               missing="$missing $p"
