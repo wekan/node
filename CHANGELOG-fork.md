@@ -65,6 +65,26 @@ no longer exercises, not a change to what Node.js does.
 Newest first.
 
 <details>
+<summary><a href="https://github.com/wekan/node/commit/01103ecbe2b5251beb79e918fa4a68b8b6aa780a">A release accumulates every platform's binary instead of being swept to one run's</a>. Thanks to xet7.</summary>
+
+`release-all.yml`'s publish step uploaded the platforms a run built and then
+DELETED every `node-*` asset the run did NOT build, so a release always held
+exactly one run's binaries. That defeats `release-all-missing.yml`, which builds
+only the few platforms a release is short of and calls `release-all.yml` to
+publish them: the sweep then removed everything already there. It is how
+`v24.19.0` came to hold only `node-mac-x64`, `node-win32.exe` and
+`node-win64.exe` - the run that added those four deleted the nine
+Linux/mac-arm64 binaries already published.
+
+The sweep is gone. A run's freshly built platforms overwrite their own old copies
+in place (`gh release upload --clobber`) and every other platform's binary is left
+untouched, so a release ACCUMULATES every platform for its version across as many
+runs as it takes. Each version has its own tag, so accumulating within a tag only
+ever gathers builds of that one version.
+
+</details>
+
+<details>
 <summary><a href="https://github.com/wekan/node/commit/9a8f3a3c1382fdc335deb8ba6065da8bb6aad64a">s390x stops segfaulting mksnapshot by dropping the --stress-turbo-late-spilling flag</a>. Thanks to xet7.</summary>
 
 The s390x cross-build died generating the V8 snapshot:
