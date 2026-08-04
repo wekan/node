@@ -65,6 +65,35 @@ no longer exercises, not a change to what Node.js does.
 Newest first.
 
 <details>
+<summary><a href="https://github.com/wekan/node/commit/11687784ddc3ce424bcbb81862f57262974decb4">Release all missing built nothing: it deadlocked on the concurrency group it shared with the workflow it calls</a>. Thanks to xet7.</summary>
+
+`release-all-missing.yml` finds which per-arch binaries a release is short of and
+builds only those, by calling `release-all.yml` in its `build` job with `uses:`.
+It also declared **the same** concurrency group as `release-all.yml` —
+`node-32bit-<version>` — deliberately, so a "fill the gaps" run and a full run
+could not upload to one release at once. But a reusable workflow that requests a
+concurrency group **already held by its caller** deadlocks: the caller holds the
+group and waits for the callee, the callee waits for the group. GitHub detects it
+and cancels the whole run —
+
+    Canceling since a deadlock was detected for concurrency group
+    'node-32bit-v24.19.0' between a top level workflow and 'build what is missing'
+
+— after the `plan` job had listed what was missing and before the `build` job
+could start. So the workflow only ever *listed* the gaps and never filled one.
+
+The caller now uses a **distinct** group, `node-missing-<version>`. The mutual
+exclusion that the shared group was for is preserved where it actually matters:
+the build and the `gh release upload` happen inside `release-all.yml`, which
+keeps its own `node-32bit-<version>` group, so this workflow's inner call and a
+direct full run still serialize on it and cannot write to one release at the same
+time. Two "fill the gaps" runs serialize on `node-missing-<version>`. With the
+deadlock gone the `build` job runs and the three build fixes below actually
+produce their binaries.
+
+</details>
+
+<details>
 <summary><a href="https://github.com/wekan/node/commit/9d7fbf3249f016063a11e8498880f5819734eb38">Fix the v24.19.0 builds for macOS, s390x and armv7: a C++20 aggregate init, a const cast, and an ARM zlib macro</a>. Thanks to xet7.</summary>
 
 The v24.19.0 "build what is missing" run left six targets unbuilt. Two of them —
