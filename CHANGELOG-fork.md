@@ -42,7 +42,7 @@ downloads only the file it needs.
 | `node-loong64` | LoongArch64 Linux | cross, in a `debian:trixie` container |
 | `node-win64.exe` | 64-bit Windows | native on a Windows runner, ClangCL |
 | `node-win32.exe` | 32-bit Windows | native on a Windows runner, ClangCL |
-| `node-mac-x64` | macOS Intel | cross, on an arm64 macos-15 runner (Xcode 16) |
+| `node-mac-x64` | macOS Intel | native, on a `macos-15-intel` runner (Xcode 16) |
 | `node-mac-arm64` | macOS Apple silicon | native, on a macos-15 runner (Xcode 16) |
 
 `armhf` and `armv7` are both 32-bit hard-float ARM; the difference is the FPU
@@ -63,6 +63,49 @@ no longer exercises, not a change to what Node.js does.
 ## Changes
 
 Newest first.
+
+<details>
+<summary><a href="https://github.com/wekan/node/commit/9a8f3a3c1382fdc335deb8ba6065da8bb6aad64a">s390x stops segfaulting mksnapshot by dropping the --stress-turbo-late-spilling flag</a>. Thanks to xet7.</summary>
+
+The s390x cross-build died generating the V8 snapshot:
+
+```
+"/src/out/Release/mksnapshot" ... --stress-turbo-late-spilling --target_arch=s390x ...
+Segmentation fault (core dumped)
+make[1]: *** [tools/v8_gypfiles/v8_snapshot.target.mk:17 ...] Error 139
+```
+
+`mksnapshot` is a host x86_64 binary that runs the target code under the V8
+**s390x simulator** (`V8_TARGET_ARCH_S390_LE_SIM`) to write the snapshot, and
+`--stress-turbo-late-spilling` crashes that simulator. It is a register-allocator
+STRESS flag - an upstream default in `tools/v8_gypfiles/v8.gyp`'s
+`mksnapshot_flags` - not needed for a correct snapshot, so it is dropped for
+every target; `--turbo_instruction_scheduling` stays. nodejs.org builds s390x on
+native Z hardware (no simulator) so it never hit this; the fork cross-compiles on
+x86_64 and does. Not run here - confirm on CI.
+
+</details>
+
+<details>
+<summary><a href="https://github.com/wekan/node/commit/f721233b330b9700ccc8e4bbb0340d466c7c9d82">mac-x64 builds natively on macos-15-intel instead of cross-compiling on arm64</a>. Thanks to xet7.</summary>
+
+The earlier macOS move (below) cross-compiled x64 on an arm64 `macos-15` runner
+because no Intel runner then offered Xcode 16. That cross-compile failed building
+OpenSSL:
+
+```
+deps/openssl/openssl/crypto/bn/asm/x86_64-gcc.c:123:9: error: invalid output constraint '=a' in asm
+```
+
+The x86_64 target arch never reached the openssl compile, so clang read the x86
+register asm (`=a` is `rax`) as arm64. GitHub now publishes **`macos-15-intel`**
+(macOS 15 Sequoia on Intel hardware, with Xcode 16), so mac-x64 builds
+**natively** there: no cross-compile, no snapshot simulation, no `-arch` flag to
+drop, and `configure_flags` is empty like every other native build. `macos-13`,
+the old Intel runner, is retired and only had Xcode 15. Not run on a mac here -
+confirm on CI.
+
+</details>
 
 <details>
 <summary><a href="https://github.com/wekan/node/commit/74906a935120421cb7bf79f69ca8f6ff5f7fa7de">"Release all missing" stops rebuilding win64/win32 every run</a>. Thanks to xet7.</summary>
