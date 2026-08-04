@@ -430,7 +430,16 @@
           'variables': {
             'mksnapshot_flags': [
               '--turbo_instruction_scheduling',
-              '--stress-turbo-late-spilling',
+              # --stress-turbo-late-spilling (an upstream default here) is dropped:
+              # it is a register-allocator STRESS flag, not needed for a correct
+              # snapshot, and it SEGFAULTS the s390x V8 simulator that this fork's
+              # cross-build runs mksnapshot under -
+              #   "/src/out/Release/mksnapshot" ... --stress-turbo-late-spilling
+              #     --target_arch=s390x ...
+              #   Segmentation fault (core dumped)  ->  v8_snapshot Error 139
+              # nodejs.org builds s390x on native Z hardware (no simulator), so it
+              # never hits this; the fork cross-compiles on x86_64 and does. Every
+              # target still gets a correct snapshot without the stress mode.
               # In cross builds, the snapshot may be generated for both the host and
               # target toolchains.  The same host binary is used to generate both, so
               # mksnapshot needs to know which target OS to use at runtime.  It's weird,
