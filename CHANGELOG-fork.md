@@ -65,6 +65,22 @@ no longer exercises, not a change to what Node.js does.
 Newest first.
 
 <details>
+<summary><a href="https://github.com/wekan/node/commit/74906a935120421cb7bf79f69ca8f6ff5f7fa7de">"Release all missing" stops rebuilding win64/win32 every run</a>. Thanks to xet7.</summary>
+
+"What the release is missing" listed win64 and win32 as missing even when both
+were already on the release, so every run rebuilt and re-uploaded them - about 25
+wasted minutes per Windows arch each time. The checksum is named after the
+PLATFORM, not the `.exe` binary: the build does
+`sha256sum node-win64.exe > node-win64.sha256sum`, so the file is
+`node-<p>.sha256sum`. The check looked for `${asset}.sha256sum` where `asset`
+carries the `.exe` for Windows - `node-win64.exe.sha256sum`, which never exists -
+so the checksum half was always false and the platform always "missing". It now
+checks `node-<p>.sha256sum`, matching what the build writes. Non-Windows was
+unaffected, since there `asset == node-<p>` and the two spellings coincide.
+
+</details>
+
+<details>
 <summary><a href="https://github.com/wekan/node/commit/900ec746ea87257159d9334f8b6d4a60b38d7b6d">The macOS builds move to Xcode 16 (macos-15), because Node 24's V8 needs C++20 aggregate init</a>. Thanks to xet7.</summary>
 
 The mac-arm64 build failed compiling V8:
