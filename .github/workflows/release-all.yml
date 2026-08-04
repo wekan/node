@@ -331,21 +331,23 @@ jobs:
             timeout_minutes: 240
           # macOS. Both are on nodejs.org; built here so the mac-arm64 bundle is
           # not the one platform taking its Node.js from somewhere else.
-          # macOS Intel. Node 24 needs Xcode 16 (see the mac-arm64 note below),
-          # but GitHub has NO Intel runner that offers it - Xcode 16 requires
-          # macOS 14+, and every macos-14/15 runner is Apple silicon. So the same
-          # P0960 build error that hit mac-arm64 would hit macos-13's Xcode 15
-          # here. Build x64 by CROSS-COMPILING on an arm64 macos-15 runner (Xcode
-          # 16, a universal SDK): --dest-cpu=x64 makes clang emit x86_64, and
-          # --cross-compiling handles the snapshot the way the Linux cross builds
-          # do. The "say what it is" step's `file` check catches a dropped arch
-          # flag (an accidentally-arm64 binary). NOTE: not run on a mac here -
-          # confirm on CI; if the snapshot step misbehaves the flags may need
-          # adjusting.
+          # macOS Intel. Node 24 needs Xcode >= 16.1 (its V8 uses C++20
+          # parenthesized aggregate initialization, P0960, which Xcode 15's Apple
+          # Clang lacks - the same feature that broke mac-arm64 on macos-14 and
+          # crypto_kmac.cc). When this was first written no Intel runner offered
+          # Xcode 16, so x64 was CROSS-COMPILED on an arm64 macos-15 runner with
+          # --dest-cpu=x64 --cross-compiling. That failed compiling OpenSSL's
+          # deps/openssl/.../asm/x86_64-gcc.c with "invalid output constraint '=a'
+          # in asm": the x86_64 target arch never reached the openssl compile, so
+          # clang read the x86 register asm as arm64. GitHub now publishes
+          # macos-15-intel (macOS 15 Sequoia on Intel hardware, with Xcode 16),
+          # so x64 is built NATIVELY there - no cross-compile, no snapshot
+          # simulation, no -arch flag to drop. (macos-13, the old Intel runner,
+          # is retired and only had Xcode 15.)
           - platform: mac-x64
             mode: mac
-            runs_on: macos-15
-            configure_flags: --dest-cpu=x64 --cross-compiling
+            runs_on: macos-15-intel
+            configure_flags: ''
             timeout_minutes: 240
           # macos-15 (Sequoia) ships Xcode 16 by default; macos-14's default is
           # Xcode 15, whose Apple Clang lacks C++20 parenthesized aggregate
