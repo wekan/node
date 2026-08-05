@@ -65,6 +65,30 @@ no longer exercises, not a change to what Node.js does.
 Newest first.
 
 <details>
+<summary><a href="https://github.com/wekan/node/commit/39e48f31539fba0f5bc18c196d80098ec74ad91f">s390x runs mksnapshot fully single-threaded, so its V8 simulator stops segfaulting</a>. Thanks to xet7.</summary>
+
+Dropping `--concurrent-builtin-generation` for s390x was not enough - mksnapshot
+still segfaulted with only `--turbo_instruction_scheduling` left:
+
+```
+"/src/out/Release/mksnapshot" ... --target_arch=s390x ...
+Segmentation fault (core dumped)  ->  v8_snapshot Error 139
+```
+
+mksnapshot for s390x runs the target code under the big-endian s390x V8 SIMULATOR
+on the x86_64 host, and that simulator is not thread-safe here: ANY background V8
+thread crashes it, not just concurrent builtin generation. Removing the
+concurrent block for s390x also removed `--concurrent-turbofan-max-threads=0`, so
+turbofan's ordinary background compilation was free to run under the simulator
+and segfault it. s390x now gets `--single-threaded`, which runs every part of
+mksnapshot (builtin generation, turbofan, GC) on one thread - the standard
+workaround for a V8 simulator under cross-generation. The little-endian simulator
+targets (ppc64le, riscv64, loong64) build concurrently without trouble, so only
+s390x needs it.
+
+</details>
+
+<details>
 <summary><a href="https://github.com/wekan/node/commit/c21a290c8e5f76c61e39dae138dd1e0fa68bb5ae">s390x drops concurrent mksnapshot too, which also segfaults its V8 simulator</a>. Thanks to xet7.</summary>
 
 With `--stress-turbo-late-spilling` gone the s390x cross-build got further but
