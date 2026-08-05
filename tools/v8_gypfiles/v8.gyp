@@ -481,24 +481,34 @@
                 'mksnapshot_flags': ['--code-comments'],
               },
             }],
-            # s390x is EXCLUDED from concurrent mksnapshot. --concurrent-builtin-
-            # generation generates builtins on many threads, and under the
-            # big-endian s390x V8 simulator that this fork's x86_64 cross-build
-            # runs mksnapshot on, that concurrency SEGFAULTS -
-            #   "/src/out/Release/mksnapshot" ... --concurrent-builtin-generation
-            #     --target_arch=s390x ...
+            # s390x is EXCLUDED from concurrent mksnapshot and forced fully
+            # single-threaded instead. mksnapshot for s390x runs the target code
+            # under the big-endian s390x V8 SIMULATOR on the x86_64 host, and that
+            # simulator is not thread-safe here: any background V8 thread segfaults
+            # it. --concurrent-builtin-generation was the obvious one, but so is
+            # turbofan's ordinary background compilation, so dropping the concurrent
+            # block alone still segfaulted -
+            #   "/src/out/Release/mksnapshot" ... --target_arch=s390x ...
             #   Segmentation fault (core dumped)  ->  v8_snapshot Error 139
-            # The little-endian simulator targets (ppc64le, riscv64, loong64) build
-            # concurrently without trouble, and s390x builds correctly SERIALLY, so
-            # only s390x-under-simulator is dropped here (like --stress-turbo-late-
-            # spilling above). nodejs.org builds s390x on native Z hardware, with no
-            # simulator, so it never hits this.
+            # --single-threaded runs ALL of mksnapshot (builtin generation,
+            # turbofan, GC) on one thread, which is the standard fix for a V8
+            # simulator under cross-generation. The little-endian simulator targets
+            # (ppc64le, riscv64, loong64) build concurrently without trouble, so
+            # only s390x needs this. nodejs.org builds s390x on native Z hardware,
+            # no simulator, so it never hits any of this.
             ['v8_enable_concurrent_mksnapshot == 1 and v8_target_arch != "s390x"', {
               'variables': {
                 'mksnapshot_flags': [
                   '--concurrent-builtin-generation',
                   # Use all the cores for concurrent builtin generation.
                   '--concurrent-turbofan-max-threads=0',
+                ],
+              },
+            }],
+            ['v8_target_arch == "s390x"', {
+              'variables': {
+                'mksnapshot_flags': [
+                  '--single-threaded',
                 ],
               },
             }],
