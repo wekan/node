@@ -65,6 +65,28 @@ no longer exercises, not a change to what Node.js does.
 Newest first.
 
 <details>
+<summary><a href="https://github.com/wekan/node/commit/c21a290c8e5f76c61e39dae138dd1e0fa68bb5ae">s390x drops concurrent mksnapshot too, which also segfaults its V8 simulator</a>. Thanks to xet7.</summary>
+
+With `--stress-turbo-late-spilling` gone the s390x cross-build got further but
+still died generating the V8 snapshot:
+
+```
+"/src/out/Release/mksnapshot" ... --concurrent-builtin-generation --target_arch=s390x ...
+Segmentation fault (core dumped)  ->  v8_snapshot Error 139
+```
+
+`--concurrent-builtin-generation` (from the `v8_enable_concurrent_mksnapshot`
+block in `tools/v8_gypfiles/v8.gyp`) generates builtins across many threads.
+Under the BIG-ENDIAN s390x V8 simulator that this fork's x86_64 cross-build runs
+mksnapshot on, that concurrency crashes. The little-endian simulator targets -
+ppc64le, riscv64, loong64 - all build concurrently without trouble in the same
+run, and s390x builds a correct snapshot SERIALLY, so the concurrent flags are
+dropped for s390x only, exactly as `--stress-turbo-late-spilling` is. nodejs.org
+builds s390x on native Z hardware with no simulator, so it never hits either.
+
+</details>
+
+<details>
 <summary><a href="https://github.com/wekan/node/commit/01103ecbe2b5251beb79e918fa4a68b8b6aa780a">A release accumulates every platform's binary instead of being swept to one run's</a>. Thanks to xet7.</summary>
 
 `release-all.yml`'s publish step uploaded the platforms a run built and then
